@@ -12,6 +12,8 @@ use std::os::raw::c_void;
 
 use anyhow::{anyhow, Result};
 
+use thiserror::Error;
+
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::EventLoop;
@@ -168,6 +170,68 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Error)]
+#[error("Missing {0}.")]
+pub struct SuitabilityError(pub &'static str);
+
+unsafe fn check_physical_device(
+    instance: &Instance,
+    data: &AppData,
+    physical_device: vk::PhysicalDevice
+) -> Result<()> {
+    let properties = instance.get_physical_device_properties(physical_device);
+    if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
+        return Err(anyhow!(SuitabilityError("Only discrete GPUs are supported.")));
+    }
+
+    let features = instance.get_physical_device_features(physical_device);
+    if features.geometry_shader != vk::TRUE {
+        return Err(anyhow!(SuitabilityError("Missing geometry shader support.")));
+    }
+
+    QueueFamilyIndicies::get(instance, data, physical_device)?;
+
+    Ok(())
+}
+
+unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
+    for physical_device in instance.enumerate_physical_devices()? {
+        let properties = instance.get_physical_device_properties(physical_device);
+
+        if let Err(error) = check_physical_device(instance, data, physical_device) {
+            warn!("Skipping physical device (`{}`): {}", properties.device_name, error);
+        } else {
+            info!("Selected physical device (`{}`).", properties.device_name);
+            data.physical_device = physical_device;
+            return Ok(());
+        }
+    }
+
+    Err(anyhow!("Failed to find suitable physical device."))
+}
+
+#[derive(Copy, Clone, Debug)]
+struct QueueFamilyIndicies {
+    graphics: u32
+}
+
+impl QueueFamilyIndicies {
+    unsafe fn get(instance: &Instance, data: &AppData, physical_device: vk::PhysicalDevice) -> Result<Self> {
+        let properties = instance.get_physical_device_queue_family_properties(physical_device);
+
+        let graphics = properties
+            .iter()
+            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+            .map(|i| i as u32);
+
+        if let Some(graphics) = graphics {
+            Ok(Self { graphics })
+        } else {
+            Err(anyhow!(SuitabilityError("Missing required queue families.")))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct App {
     entry: Entry,
@@ -184,11 +248,15 @@ impl App {
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
 
+        pick_physical_device(&instance, &mut data)?;
+
         Ok(Self { entry, instance, data, it: 0 })
     }
 
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
-        print!("{}\n", self.it);
+        if self.it % 10000 == 0 {
+            print!("{}\n", self.it);
+        }
         self.it += 1;
         Ok(())
     }
@@ -205,5 +273,6 @@ impl App {
 
 #[derive(Clone, Debug, Default)]
 struct AppData {
-    messenger: vk::DebugUtilsMessengerEXT
+    messenger: vk::DebugUtilsMessengerEXT,
+    physical_device: vk::PhysicalDevice
 }
