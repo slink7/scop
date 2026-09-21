@@ -99,11 +99,24 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData)
         vk::InstanceCreateFlags::empty()
     };
 
-    let info = vk::InstanceCreateInfo::builder()
+    let mut info = vk::InstanceCreateInfo::builder()
         .application_info(&application_info)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .flags(flags);
+
+    let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL |
+            vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION |
+            vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+        )
+        .user_callback(Some(debug_callback));
+
+    if VALIDATION_ENABLED {
+        info = info.push_next(&mut debug_info);
+    }
 
     let instance = entry.create_instance(&info, None)?;
 
