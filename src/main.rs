@@ -15,25 +15,41 @@ use log::*;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
+use vulkanalia::Version;
 
-unsafe fn creat_instance(window: &Window, entry: &Entry) -> Result<Instance> {
+const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
+
+unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
     let application_info = vk::ApplicationInfo::builder()
-        .application_name(b"scop\0")
+        .application_name(b"scop")
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(b"bababooey engine\0")
         .engine_version(vk::make_version(0, 0, 0))
         .api_version(vk::make_version(1, 0, 0,));
 
-    let extensions = vk_window::get_required_instance_extensions(window)
+    let mut extensions = vk_window::get_required_instance_extensions(window)
         .iter()
         .map(|e| e.as_ptr())
         .collect::<Vec<_>>();
 
+    let flags = if
+        cfg!(target_os = "macos") &&
+        entry.version()? >= PORTABILITY_MACOS_VERSION
+    {
+        info!("Enabling extensions for macOS portability.");
+        extensions.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_EXTENSION.name.as_ptr());
+        extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
+        vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+    } else {
+        vk::InstanceCreateFlags::empty()
+    };
+
     let info = vk::InstanceCreateInfo::builder()
         .application_info(&application_info)
-        .enabled_extension_names(&extensions);
+        .enabled_extension_names(&extensions)
+        .flags(flags);
 
-    Ok(entry.create_instance(&info, None)?);
+    Ok(entry.create_instance(&info, None)?)
 }
 
 fn main() -> Result<()> {
@@ -70,13 +86,19 @@ fn main() -> Result<()> {
 
 #[derive(Clone, Debug)]
 struct App {
+    entry: Entry,
+    instance: Instance,
     it: i32
 }
 
 impl App {
     
     unsafe fn create(window: &Window) -> Result<Self> {
-        Ok(Self { it: 5 })
+        let loader = LibloadingLoader::new(LIBRARY)?;
+        let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
+        let instance = create_instance(window, &entry)?;
+
+        Ok(Self { entry, instance, it: 5 })
     }
 
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -86,6 +108,7 @@ impl App {
     }
 
     unsafe fn destroy(&mut self) {
+        self.instance.destroy_instance(None);
     }
 
 }
