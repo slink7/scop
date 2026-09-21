@@ -6,18 +6,29 @@
     clippy::unnecessary_wraps
 )]
 
+use std::collections::HashSet;
+use std::ffi::CStr;
+use std::os::raw::c_void;
+
 use anyhow::{anyhow, Result};
+
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
+
 use log::*;
+
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::Version;
+use vulkanalia::vk::ExtDebugUtilsExtensionInstanceCommands;
 
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
+const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+const VALIDATION_LAYER: vk::ExtensionName = 
+    vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
 unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
     let application_info = vk::ApplicationInfo::builder()
@@ -26,6 +37,22 @@ unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
         .engine_name(b"bababooey engine\0")
         .engine_version(vk::make_version(0, 0, 0))
         .api_version(vk::make_version(1, 0, 0,));
+
+    let available_layers = entry
+        .enumerate_instance_layer_properties()?
+        .iter()
+        .map(|l| l.layer_name)
+        .collect::<HashSet<_>>();
+
+    if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
+        return Err(anyhow!("Validation layer requested but not supported."));
+    }
+
+    let layers = if VALIDATION_ENABLED {
+        vec![VALIDATION_LAYER.as_ptr()]
+    } else {
+        Vec::new()
+    };
 
     let mut extensions = vk_window::get_required_instance_extensions(window)
         .iter()
@@ -46,6 +73,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
 
     let info = vk::InstanceCreateInfo::builder()
         .application_info(&application_info)
+        .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .flags(flags);
 
