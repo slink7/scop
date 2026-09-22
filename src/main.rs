@@ -232,8 +232,10 @@ unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device
     let present_mode = get_swapchain_present_mode(&support.present_modes);
     let extent = get_swapchain_extent(window, support.capabilities);
 
-    let images_count = (support.capabilities.min_image_count + 1).min(support.capabilities.max_image_count);
-    //Not official
+    let mut images_count = support.capabilities.min_image_count + 1;
+    if support.capabilities.max_image_count != 0 && images_count > support.capabilities.max_image_count {
+        images_count = support.capabilities.max_image_count;
+    }
     
     let mut queue_family_indices = vec![];
     let images_sharing_mode = if indices.graphics != indices.present {
@@ -260,7 +262,12 @@ unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device
         .clipped(true)
         .old_swapchain(vk::SwapchainKHR::null());
 
+    data.swapchain_format = surface_format.format;
+    data.swapchain_extent = extent;
+
     data.swapchain = device.create_swapchain_khr(&info, None)?;
+
+    data.swapchain_images = device.get_swapchain_images_khr(data.swapchain)?;
 
     Ok(())
 }
@@ -476,5 +483,8 @@ struct AppData {
     physical_device: vk::PhysicalDevice,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
-    swapchain: vk::SwapchainKHR
+    swapchain_format: vk::Format,
+    swapchain_extent: vk::Extent2D,
+    swapchain: vk::SwapchainKHR,
+    swapchain_images: Vec<vk::Image>
 }
