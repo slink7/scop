@@ -585,11 +585,21 @@ unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut Ap
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(color_attachments);
     
+    let dependency = vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
     let attachments = &[color_attachment];
     let subpasses = &[subpass];
+    let dependencies = &[dependency];
     let info = vk::RenderPassCreateInfo::builder()
         .attachments(attachments)
-        .subpasses(subpasses);
+        .subpasses(subpasses)
+        .dependencies(dependencies);
 
     data.render_pass = device.create_render_pass(&info, None)?;
 
@@ -612,6 +622,75 @@ unsafe fn create_framebuffer(device: &Device, data: &mut AppData) -> Result<()> 
             device.create_framebuffer(&create_info, None)
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
+unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device)?;
+
+    let info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::empty())
+        .queue_family_index(indices.graphics);
+
+    data.command_pool = device.create_command_pool(&info, None)?;
+
+    Ok(())
+}
+
+unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
+    let allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(data.framebuffers.len() as u32);
+
+    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+
+    for (i, command_buffer) in data.command_buffers.iter().enumerate() {
+        let inheritance = vk::CommandBufferInheritanceInfo::builder();
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::empty())
+            .inheritance_info(&inheritance);
+
+        device.begin_command_buffer(*command_buffer, &info)?;
+
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(data.swapchain_extent);
+
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0]
+            }
+        };
+
+        let clear_values = &[color_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(data.render_pass)
+            .framebuffer(data.framebuffers[i])
+            .render_area(render_area)
+            .clear_values(clear_values);
+
+        device.cmd_begin_render_pass(*command_buffer, &info, vk::SubpassContents::INLINE);
+
+        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
+
+        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
+
+        device.cmd_end_render_pass(*command_buffer);
+
+        device.end_command_buffer(*command_buffer)?;
+    }
+
+    Ok(())
+}
+
+unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Result<()> {
+    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+
+    data.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
+    data.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
 
     Ok(())
 }
@@ -647,10 +726,49 @@ impl App {
 
         create_framebuffer(&device, &mut data)?;
 
+        create_command_pool(&instance, &device, &mut data)?;
+        create_command_buffer(&device, &mut data)?;
+
+        create_sync_objects(&device, &mut data)?;
+
         Ok(Self { entry, instance, data, device, it: 0 })
     }
 
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
+
+        let image_index = self
+            .device
+            .acquire_next_image_khr(
+                self.data.swapchain, 
+                u64::MAX,
+                self.data.image_available_semaphore,
+                vk::Fence::null()
+            )?
+            .0 as usize;
+
+        let wait_semaphores = &[self.data.image_available_semaphore];
+        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let commands_buffers = &[self.data.command_buffers[image_index as usize]];
+        let signal_semaphores = &[self.data.render_finished_semaphore];
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_stages)
+            .command_buffers(commands_buffers)
+            .signal_semaphores(signal_semaphores);
+
+        self.device.queue_submit(self.data.graphics_queue, &[submit_info], vk::Fence::null())?;
+
+        let swapchains = &[self.data.swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        self.device.queue_present_khr(self.data.present_queue, &present_info)?;
+
+        self.device.queue_wait_idle(self.data.present_queue)?;
+
         if self.it % 10000 == 0 {
             print!("{}\n", self.it);
         }
@@ -659,9 +777,16 @@ impl App {
     }
 
     unsafe fn destroy(&mut self) {
+        self.device.device_wait_idle().unwrap();
+
+        self.device.destroy_semaphore(self.data.render_finished_semaphore, None);
+        self.device.destroy_semaphore(self.data.image_available_semaphore, None);
+
+        self.device.destroy_command_pool(self.data.command_pool, None);
+
         self.data.framebuffers
             .iter()
-            .for_each(|f| self.device.destroy_framebuffer(f, None));
+            .for_each(|f| self.device.destroy_framebuffer(*f, None));
 
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
@@ -700,5 +825,9 @@ struct AppData {
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    framebuffers: Vec<vk::Framebuffer>
+    framebuffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore
 }
