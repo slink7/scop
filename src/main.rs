@@ -159,9 +159,13 @@ fn main() -> Result<()> {
         match event {
             Event::AboutToWait => window.request_redraw(),
             Event::WindowEvent { event, .. } => match event {
+                WindowEvent::Resized(_) => app.resized = true,
                 WindowEvent::RedrawRequested if !elwt.exiting() => unsafe {
-                    app.render(&window)
-                }.unwrap(),
+                    if let Err(e) = app.render(&window) {
+                        eprintln!("render error: {e:?}");
+                        elwt.exit();
+                    }
+                },
                 WindowEvent::CloseRequested => {
                     elwt.exit();
                     unsafe {
@@ -604,7 +608,7 @@ unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut Ap
     Ok(())
 }
 
-unsafe fn create_framebuffer(device: &Device, data: &mut AppData) -> Result<()> {
+unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()> {
     data.framebuffers = data
         .swapchain_image_views
         .iter()
@@ -710,6 +714,7 @@ struct App {
     data: AppData,
     device: Device,
     frame: usize,
+    resized: bool,
     it: i32
 }
 
@@ -733,31 +738,83 @@ impl App {
         create_render_pass(&instance, &device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
-        create_framebuffer(&device, &mut data)?;
+        create_framebuffers(&device, &mut data)?;
 
         create_command_pool(&instance, &device, &mut data)?;
         create_command_buffer(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device, frame: 0, it: 0 })
+        Ok(Self { entry, instance, data, device, frame: 0, resized: false, it: 0 })
     }
 
+   unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+    println!("=== RECREATING SWAPCHAIN ===");
+
+    println!("waiting for device...");
+    self.device.device_wait_idle()?;
+
+    println!("destroying old swapchain...");
+    self.destroy_swapchain();
+
+    println!("creating swapchain...");
+    create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
+
+    println!("creating image views...");
+    create_swapchain_image_views(&self.device, &mut self.data)?;
+
+    println!("creating render pass...");
+    create_render_pass(&self.instance, &self.device, &mut self.data)?;
+
+    println!("creating pipeline...");
+    create_pipeline(&self.device, &mut self.data)?;
+
+    println!("creating framebuffer...");
+    create_framebuffers(&self.device, &mut self.data)?;
+
+    println!("creating command buffer...");
+    create_command_buffer(&self.device, &mut self.data)?;
+
+    self.data.images_in_flight = self.data
+        .swapchain_images
+        .iter()
+        .map(|_| vk::Fence::null())
+        .collect();
+
+    println!("=== RECREATED ===");
+
+    Ok(())
+}    
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
 
         self.device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
         // self.device.reset_fences(&[self.data.in_flight_fences[self.frame]])?;
 
-        let image_index = self
+        let result = self
             .device
             .acquire_next_image_khr(
                 self.data.swapchain, 
                 u64::MAX,
                 self.data.image_available_semaphore[self.frame],
                 vk::Fence::null()
-            )?
-            .0 as usize;
+            );
+
+        let image_index = match result {
+            Ok((image_index, _)) => image_index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                println!("OUT_OF_DATE_KHR during acquire");
+                return self.recreate_swapchain(window)
+            },
+            Err(vk::ErrorCode::SURFACE_LOST_KHR) => {
+                println!("SURFACE_LOST_KHR during acquire");
+                return Err(anyhow!("SURFACE_LOST_KHR during acquire"));
+            }
+            Err(e) => {
+                println!("Err during acquire {e:?}");
+                return Err(anyhow!(e))
+            }
+        };
 
         if !self.data.images_in_flight[image_index as usize].is_null() {
             self.device.wait_for_fences(
@@ -790,7 +847,23 @@ impl App {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.device.queue_present_khr(self.data.present_queue, &present_info)?;
+        println!("Presenting image {}", image_index);
+
+        let result = self.device.queue_present_khr(self.data.present_queue, &present_info);
+
+        println!("Result of presenting: {:?}", result);
+
+        let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR)
+            || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
+
+        if self.resized || changed {
+            self.resized = false;
+            self.recreate_swapchain(window)?;
+        } else if let Err(e) = result {
+            return Err(anyhow!(e));
+        }
+
+        // self.device.queue_present_khr(self.data.present_queue, &present_info)?;
 
         self.device.queue_wait_idle(self.data.present_queue)?;
 
@@ -803,8 +876,28 @@ impl App {
         Ok(())
     }
 
+    unsafe fn destroy_swapchain(&mut self) {
+        self.data.framebuffers
+            .iter()
+            .for_each(|f| self.device.destroy_framebuffer(*f, None));
+
+        self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
+
+        self.device.destroy_pipeline(self.data.pipeline, None);
+        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
+        self.device.destroy_render_pass(self.data.render_pass, None);
+
+        self.data.swapchain_image_views
+            .iter()
+            .for_each(|v| self.device.destroy_image_view(*v, None));
+
+        self.device.destroy_swapchain_khr(self.data.swapchain, None);
+    }
+
     unsafe fn destroy(&mut self) {
-        self.device.device_wait_idle().unwrap();
+        // self.device.device_wait_idle().unwrap();
+
+        self.destroy_swapchain();
 
         self.data.in_flight_fences
             .iter()
@@ -819,27 +912,14 @@ impl App {
 
         self.device.destroy_command_pool(self.data.command_pool, None);
 
-        self.data.framebuffers
-            .iter()
-            .for_each(|f| self.device.destroy_framebuffer(*f, None));
-
-        self.device.destroy_pipeline(self.data.pipeline, None);
-        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
-        self.device.destroy_render_pass(self.data.render_pass, None);
-
-        self.data.swapchain_image_views
-            .iter()
-            .for_each(|v| self.device.destroy_image_view(*v, None));
-
-        self.device.destroy_swapchain_khr(self.data.swapchain, None);
 
         self.device.destroy_device(None);
+        self.instance.destroy_surface_khr(self.data.surface, None);
 
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.messenger, None);
         }
 
-        self.instance.destroy_surface_khr(self.data.surface, None);
         self.instance.destroy_instance(None);
     }
 
