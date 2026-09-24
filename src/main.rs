@@ -28,7 +28,6 @@ use vulkanalia::Version;
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands};
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 use vulkanalia::bytecode::Bytecode;
-// use vulkanalia::vk::KhrSwapchainExtensionDeviceCommands;
 
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -65,7 +64,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData)
     -> Result<Instance>
 {
     let application_info = vk::ApplicationInfo::builder()
-        .application_name(b"scop")
+        .application_name(b"scop\0")
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(b"bababooey engine\0")
         .engine_version(vk::make_version(0, 0, 0))
@@ -427,8 +426,6 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
 
     let features = vk::PhysicalDeviceFeatures::builder();
     
-    // let queue_infos = &[queue_info];
-
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
@@ -749,30 +746,15 @@ impl App {
     }
 
    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
-    println!("=== RECREATING SWAPCHAIN ===");
 
-    println!("waiting for device...");
     self.device.device_wait_idle()?;
-
-    println!("destroying old swapchain...");
     self.destroy_swapchain();
 
-    println!("creating swapchain...");
     create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
-
-    println!("creating image views...");
     create_swapchain_image_views(&self.device, &mut self.data)?;
-
-    println!("creating render pass...");
     create_render_pass(&self.instance, &self.device, &mut self.data)?;
-
-    println!("creating pipeline...");
     create_pipeline(&self.device, &mut self.data)?;
-
-    println!("creating framebuffer...");
     create_framebuffers(&self.device, &mut self.data)?;
-
-    println!("creating command buffer...");
     create_command_buffer(&self.device, &mut self.data)?;
 
     self.data.images_in_flight = self.data
@@ -781,15 +763,11 @@ impl App {
         .map(|_| vk::Fence::null())
         .collect();
 
-    println!("=== RECREATED ===");
-
     Ok(())
 }    
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
 
         self.device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
-
-        // self.device.reset_fences(&[self.data.in_flight_fences[self.frame]])?;
 
         let result = self
             .device
@@ -803,15 +781,9 @@ impl App {
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
-                println!("OUT_OF_DATE_KHR during acquire");
                 return self.recreate_swapchain(window)
             },
-            Err(vk::ErrorCode::SURFACE_LOST_KHR) => {
-                println!("SURFACE_LOST_KHR during acquire");
-                return Err(anyhow!("SURFACE_LOST_KHR during acquire"));
-            }
             Err(e) => {
-                println!("Err during acquire {e:?}");
                 return Err(anyhow!(e))
             }
         };
@@ -847,11 +819,7 @@ impl App {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        println!("Presenting image {}", image_index);
-
         let result = self.device.queue_present_khr(self.data.present_queue, &present_info);
-
-        println!("Result of presenting: {:?}", result);
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR)
             || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
@@ -863,13 +831,11 @@ impl App {
             return Err(anyhow!(e));
         }
 
-        // self.device.queue_present_khr(self.data.present_queue, &present_info)?;
-
         self.device.queue_wait_idle(self.data.present_queue)?;
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
-        if self.it % 1 == 0 {
+        if self.it % 1 == 10000 {
             print!("{}\n", self.it);
         }
         self.it += 1;
@@ -895,8 +861,6 @@ impl App {
     }
 
     unsafe fn destroy(&mut self) {
-        // self.device.device_wait_idle().unwrap();
-
         self.destroy_swapchain();
 
         self.data.in_flight_fences
