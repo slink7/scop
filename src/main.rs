@@ -45,11 +45,24 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[
 ];
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-static VERTICES: [Vertex; 3] = [
-    Vertex::new(vec2(0.0, -0.5), vec3(1.0, 1.0, 1.0)),
-    Vertex::new(vec2(0.5, 0.5), vec3(0.0, 1.0, 0.0)),
-    Vertex::new(vec2(-0.5, 0.5), vec3(0.0, 0.0, 1.0))
+const RED: Vec3 = vec3(1.0, 0.0, 0.0);
+
+const SC: f32 = -0.25;
+
+static VERTICES: [Vertex; 10] = [
+    Vertex::new(vec2(0.0 * SC, 1.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(1.0 * SC, 2.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(2.0 * SC, 2.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(3.0 * SC, 1.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(3.0 * SC, 0.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(0.0 * SC, -3.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(-3.0 * SC, 0.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(-3.0 * SC, 1.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(-2.0 * SC, 2.0 * SC), vec3(1.0, 0.0, 0.0)),
+    Vertex::new(vec2(-1.0 * SC, 2.0 * SC), vec3(1.0, 0.0, 0.0)),
 ];
+
+const INDICES: &[u16] = &[5, 4, 3, 5, 3, 2, 5, 2, 1, 5, 1, 0, 5, 0, 9, 5, 9, 8, 5, 8, 7, 5, 7, 6];
 
 extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -740,8 +753,10 @@ unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<(
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
 
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
+        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
 
-        device.cmd_draw(*command_buffer, VERTICES.len() as u32, 1, 0, 0);
+        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
+        // device.cmd_draw(*command_buffer, VERTICES.len() as u32, 1, 0, 0);
 
         device.cmd_end_render_pass(*command_buffer);
 
@@ -892,6 +907,49 @@ unsafe fn copy_buffer(device: &Device, data: &AppData, source: vk::Buffer, desti
     Ok(())
 }
 
+unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+    let size = (size_of::<u16>() * INDICES.len()) as u64;
+
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance,
+        device,
+        data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
+    )?;
+
+    let memory = device.map_memory(
+        staging_buffer_memory,
+        0,
+        size,
+        vk::MemoryMapFlags::empty()
+    )?;
+
+    memcpy(INDICES.as_ptr(), memory.cast(), INDICES.len());
+
+    device.unmap_memory(staging_buffer_memory);
+
+    let (index_buffer, index_buffer_memory) = create_buffer(
+        instance,
+        device,
+        data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL
+    )?;
+
+    data.index_buffer = index_buffer;
+    data.index_buffer_memory = index_buffer_memory;
+
+    copy_buffer(device, data, staging_buffer, index_buffer, size)?;
+
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+    
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct App {
     entry: Entry,
@@ -926,6 +984,7 @@ impl App {
         create_framebuffers(&device, &mut data)?;
 
         create_command_pool(&instance, &device, &mut data)?;
+        create_index_buffer(&instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_command_buffer(&device, &mut data)?;
 
@@ -1052,6 +1111,8 @@ impl App {
     unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
 
+        self.device.destroy_buffer(self.data.index_buffer, None);
+        self.device.free_memory(self.data.index_buffer_memory, None);
         self.device.destroy_buffer(self.data.vertex_buffer, None);
         self.device.free_memory(self.data.vertex_buffer_memory, None);
 
@@ -1104,5 +1165,7 @@ struct AppData {
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
     vertex_buffer: vk::Buffer,
-    vertex_buffer_memory: vk::DeviceMemory
+    vertex_buffer_memory: vk::DeviceMemory,
+    index_buffer: vk::Buffer,
+    index_buffer_memory: vk::DeviceMemory
 }
