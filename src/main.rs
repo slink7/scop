@@ -9,6 +9,13 @@
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_void;
+use std::mem::size_of;
+use std::ptr::copy_nonoverlapping as memcpy;
+
+use cgmath::{vec2, vec3};
+
+type Vec2 = cgmath::Vector2<f32>;
+type Vec3 = cgmath::Vector3<f32>;
 
 use anyhow::{anyhow, Result};
 
@@ -38,6 +45,12 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[
 ];
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
+static VERTICES: [Vertex; 3] = [
+    Vertex::new(vec2(0.0, -0.5), vec3(1.0, 1.0, 1.0)),
+    Vertex::new(vec2(0.5, 0.5), vec3(0.0, 1.0, 0.0)),
+    Vertex::new(vec2(-0.5, 0.5), vec3(0.0, 0.0, 1.0))
+];
+
 extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     type_: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -58,6 +71,45 @@ extern "system" fn debug_callback(
     }
 
     vk::FALSE
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Vertex {
+    pos: Vec2,
+    color: Vec3
+}
+
+impl Vertex {
+    const fn new(pos: Vec2, color: Vec3) -> Self {
+        Self { pos, color }
+    }
+
+    fn binding_description() -> vk::VertexInputBindingDescription {
+        vk::VertexInputBindingDescription::builder()
+            .binding(0)
+            .stride(size_of::<Vertex>() as u32)
+            .input_rate(vk::VertexInputRate::VERTEX)
+            .build()
+    }
+
+    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+        let pos = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0)
+            .build();
+
+        let color = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(1)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(size_of::<Vec2>() as u32)
+            .build();
+        
+        [pos, color]
+    }
 }
 
 unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData)
@@ -492,7 +544,11 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .module(frag_shader_module)
         .name(b"main\0");
 
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+    let binding_descriptions = &[Vertex::binding_description()];
+    let attribute_descriptions = Vertex::attribute_descriptions();
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(binding_descriptions)
+        .vertex_attribute_descriptions(&attribute_descriptions);
 
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -683,7 +739,9 @@ unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<(
 
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
 
-        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
+        device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
+
+        device.cmd_draw(*command_buffer, VERTICES.len() as u32, 1, 0, 0);
 
         device.cmd_end_render_pass(*command_buffer);
 
@@ -708,6 +766,53 @@ unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Result<()
         .iter()
         .map(|_| vk::Fence::null())
         .collect();
+
+    Ok(())
+}
+
+unsafe fn get_memory_type_index(instance: &Instance,data: &AppData, properties: vk::MemoryPropertyFlags, requirements: vk::MemoryRequirements) -> Result<u32> {
+    let memory = instance.get_physical_device_memory_properties(data.physical_device);
+
+    (0..memory.memory_type_count)
+        .find(|i| {
+            let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
+            let memory_type = memory.memory_types[*i as usize];
+            suitable && memory_type.property_flags.contains(properties)
+        })
+        .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
+}
+
+unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size((size_of::<Vertex>() * VERTICES.len()) as u64)
+        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    data.vertex_buffer = device.create_buffer(&buffer_info, None)?;
+
+    let requirements = device.get_buffer_memory_requirements(data.vertex_buffer);
+
+    let memory_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(requirements.size)
+        .memory_type_index(get_memory_type_index(
+            instance,
+            data,
+            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
+            requirements
+        )?);
+
+    data.vertex_buffer_memory = device.allocate_memory(&memory_info, None)?;
+    device.bind_buffer_memory(data.vertex_buffer, data.vertex_buffer_memory, 0)?;
+
+    let memory = device.map_memory(
+        data.vertex_buffer_memory,
+        0,
+        buffer_info.size,
+        vk::MemoryMapFlags::empty()
+    )?;
+
+    memcpy(VERTICES.as_ptr(), memory.cast(), VERTICES.len());
+    device.unmap_memory(data.vertex_buffer_memory);
 
     Ok(())
 }
@@ -746,6 +851,7 @@ impl App {
         create_framebuffers(&device, &mut data)?;
 
         create_command_pool(&instance, &device, &mut data)?;
+        create_vertex_buffer(&instance, &device, &mut data)?;
         create_command_buffer(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
@@ -871,6 +977,9 @@ impl App {
     unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
 
+        self.device.destroy_buffer(self.data.vertex_buffer, None);
+        self.device.free_memory(self.data.vertex_buffer_memory, None);
+
         self.data.in_flight_fences
             .iter()
             .for_each(|f| self.device.destroy_fence(*f, None));
@@ -918,5 +1027,7 @@ struct AppData {
     image_available_semaphore: Vec<vk::Semaphore>,
     render_finished_semaphore: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
-    images_in_flight: Vec<vk::Fence>
+    images_in_flight: Vec<vk::Fence>,
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory
 }
