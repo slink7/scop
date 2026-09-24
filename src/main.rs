@@ -154,12 +154,20 @@ fn main() -> Result<()> {
         .build(&event_loop)?;
 
     let mut app = unsafe { App::create(&window)? };
+    let mut minimized = false;
     event_loop.run(move |event, elwt| {
         match event {
             Event::AboutToWait => window.request_redraw(),
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::Resized(_) => app.resized = true,
-                WindowEvent::RedrawRequested if !elwt.exiting() => unsafe {
+                WindowEvent::Resized(size) => {
+                    if size.width == 0 || size.height == 0 {
+                        minimized = true;
+                    } else {
+                        minimized = false;
+                        app.resized = true
+                    }
+                },
+                WindowEvent::RedrawRequested if !elwt.exiting() && !minimized => unsafe {
                     if let Err(e) = app.render(&window) {
                         eprintln!("render error: {e:?}");
                         elwt.exit();
