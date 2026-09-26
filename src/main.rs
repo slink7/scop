@@ -42,6 +42,9 @@ use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrSwapchainExtensi
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 use vulkanalia::bytecode::Bytecode;
 
+const MODEL_PATH: &str = "assets/heart.obj";
+const TEXTURE_PATH: &str = "assets/heart_texture.png";
+
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER: vk::ExtensionName = 
@@ -630,7 +633,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::FRONT)
+        .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(false);
 
@@ -1155,7 +1158,7 @@ unsafe fn create_image(
 }
 
 unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-    let image = File::open("./assets/viking_room.png")?;
+    let image = File::open(TEXTURE_PATH)?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;
@@ -1495,7 +1498,7 @@ unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &mut 
 }
 
 fn load_model(data: &mut AppData) -> Result<()> {
-    let mut reader = BufReader::new(File::open("assets/viking_room.obj")?);
+    let mut reader = BufReader::new(File::open(MODEL_PATH)?);
 
     let (models, _) = tobj::load_obj_buf(
         &mut reader,
@@ -1513,12 +1516,12 @@ fn load_model(data: &mut AppData) -> Result<()> {
             let vertex = Vertex {
                 pos: vec3(
                     model.mesh.positions[pos_offset + 0],
-                    model.mesh.positions[pos_offset + 1],
                     model.mesh.positions[pos_offset + 2],
+                    model.mesh.positions[pos_offset + 1],
                 ),
                 color: vec3(1.0, 1.0, 1.0),
                 tex_coord: vec2(
-                    model.mesh.texcoords[tex_coord_offset + 0],
+                    1.0 - model.mesh.texcoords[tex_coord_offset + 0],
                     1.0 - model.mesh.texcoords[tex_coord_offset + 1]
                 )
             };
