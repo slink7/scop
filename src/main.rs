@@ -7,12 +7,15 @@
 )]
 
 use std::collections::HashSet;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::mem::size_of;
 use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 use std::fs::File;
+use std::io::BufReader;
 
 use cgmath::{vec2, vec3, point3, Deg};
 
@@ -53,33 +56,33 @@ const RED: Vec3 = vec3(1.0, 0.0, 0.0);
 const SC: f32 = -0.25;
 const UV: f32 = 1.0 / 6.0;
 
-static VERTICES: [Vertex; 20] = [
-    Vertex::new(vec3(0.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
-    Vertex::new(vec3(0.0 * SC, -3.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
-    Vertex::new(vec3(-3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
-    Vertex::new(vec3(-3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(-2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(-1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(0.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
-    Vertex::new(vec3(0.0 * SC, -3.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
-    Vertex::new(vec3(-3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
-    Vertex::new(vec3(-3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
-    Vertex::new(vec3(-2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
-    Vertex::new(vec3(-1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
-];
+// static VERTICES: [Vertex; 20] = [
+//     Vertex::new(vec3(0.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
+//     Vertex::new(vec3(0.0 * SC, -3.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
+//     Vertex::new(vec3(-3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
+//     Vertex::new(vec3(-3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(-2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(-1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(0.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
+//     Vertex::new(vec3(0.0 * SC, -3.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
+//     Vertex::new(vec3(-3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
+//     Vertex::new(vec3(-3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
+//     Vertex::new(vec3(-2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
+//     Vertex::new(vec3(-1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
+// ];
 
-const INDICES: &[u16] = &[
-    5, 4, 3, 5, 3, 2, 5, 2, 1, 5, 1, 0, 5, 0, 9, 5, 9, 8, 5, 8, 7, 5, 7, 6,
-    15, 14, 13, 15, 13, 12, 15, 12, 11, 15, 11, 10, 15, 10, 19, 15, 19, 18, 15, 18, 17, 15, 17, 16
-];
+// const INDICES: &[u16] = &[
+//     5, 4, 3, 5, 3, 2, 5, 2, 1, 5, 1, 0, 5, 0, 9, 5, 9, 8, 5, 8, 7, 5, 7, 6,
+//     15, 14, 13, 15, 13, 12, 15, 12, 11, 15, 11, 10, 15, 10, 19, 15, 19, 18, 15, 18, 17, 15, 17, 16
+// ];
 
 extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -155,6 +158,29 @@ impl Vertex {
             .build();
         
         [pos, color, tex_coord]
+    }
+}
+
+impl PartialEq for Vertex {
+    fn eq(&self, other: &Self) -> bool {
+        self.pos == other.pos
+            && self.color == other.color
+            && self.tex_coord == other.tex_coord
+    }
+}
+
+impl Eq for Vertex {}
+
+impl Hash for Vertex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pos[0].to_bits().hash(state);
+        self.pos[1].to_bits().hash(state);
+        self.pos[2].to_bits().hash(state);
+        self.color[0].to_bits().hash(state);
+        self.color[1].to_bits().hash(state);
+        self.color[2].to_bits().hash(state);
+        self.tex_coord[0].to_bits().hash(state);
+        self.tex_coord[1].to_bits().hash(state);
     }
 }
 
@@ -587,7 +613,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .width(data.swapchain_extent.width as f32)
         .height(data.swapchain_extent.height as f32)
         .min_depth(0.0)
-        .max_depth(0.0);
+        .max_depth(1.0);
 
     let scissor = vk::Rect2D::builder()
         .offset(vk::Offset2D { x: 0, y: 0 })
@@ -802,11 +828,11 @@ unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<(
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
 
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT32);
 
         device.cmd_bind_descriptor_sets(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_sets[i]], &[]);
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
-        // device.cmd_draw(*command_buffer, VERTICES.len() as u32, 1, 0, 0);
+        device.cmd_draw_indexed(*command_buffer, data.indices.len() as u32, 1, 0, 0, 0);
+        // device.cmd_draw(*command_buffer, data.vertices.len() as u32, 1, 0, 0);
 
         device.cmd_end_render_pass(*command_buffer);
 
@@ -883,7 +909,7 @@ unsafe fn create_buffer(
 
 unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
 
-    let size = (size_of::<Vertex>() * VERTICES.len()) as u64;
+    let size = (size_of::<Vertex>() * data.vertices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -901,7 +927,7 @@ unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &mut 
         vk::MemoryMapFlags::empty()
     )?;
 
-    memcpy(VERTICES.as_ptr(), memory.cast(), VERTICES.len());
+    memcpy(data.vertices.as_ptr(), memory.cast(), data.vertices.len());
 
     device.unmap_memory(staging_buffer_memory);
 
@@ -939,7 +965,7 @@ unsafe fn copy_buffer(device: &Device, data: &AppData, source: vk::Buffer, desti
 }
 
 unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-    let size = (size_of::<u16>() * INDICES.len()) as u64;
+    let size = (size_of::<u32>() * data.indices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -957,7 +983,7 @@ unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &mut A
         vk::MemoryMapFlags::empty()
     )?;
 
-    memcpy(INDICES.as_ptr(), memory.cast(), INDICES.len());
+    memcpy(data.indices.as_ptr(), memory.cast(), data.indices.len());
 
     device.unmap_memory(staging_buffer_memory);
 
@@ -1129,7 +1155,7 @@ unsafe fn create_image(
 }
 
 unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-    let image = File::open("./assets/outset_island.png")?;
+    let image = File::open("./assets/viking_room.png")?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;
@@ -1456,14 +1482,78 @@ unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &mut 
 
     data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH)?;
 
-    transition_image_layout(
-        device,
-        data,
-        data.depth_image,
-        format,
-        vk::ImageLayout::UNDEFINED,
-        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    // transition_image_layout(
+    //     device,
+    //     data,
+    //     data.depth_image,
+    //     format,
+    //     vk::ImageLayout::UNDEFINED,
+    //     vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    // )?;
+
+    Ok(())
+}
+
+fn load_model(data: &mut AppData) -> Result<()> {
+    let mut reader = BufReader::new(File::open("assets/viking_room.obj")?);
+
+    let (models, _) = tobj::load_obj_buf(
+        &mut reader,
+        &tobj::LoadOptions { triangulate: true, ..Default::default() },
+        |_| Ok(Default::default())
     )?;
+    
+    let mut unique_vertices = HashMap::new();
+
+    for model in &models {
+        for index in &model.mesh.indices {
+            let pos_offset = (3 * index) as usize;
+            let tex_coord_offset = (2 * index) as usize;
+
+            let vertex = Vertex {
+                pos: vec3(
+                    model.mesh.positions[pos_offset + 0],
+                    model.mesh.positions[pos_offset + 1],
+                    model.mesh.positions[pos_offset + 2],
+                ),
+                color: vec3(1.0, 1.0, 1.0),
+                tex_coord: vec2(
+                    model.mesh.texcoords[tex_coord_offset + 0],
+                    1.0 - model.mesh.texcoords[tex_coord_offset + 1]
+                )
+            };
+
+            if let Some(index) = unique_vertices.get(&vertex) {
+                data.indices.push(*index as u32);
+            } else {
+                let index = data.vertices.len();
+                unique_vertices.insert(vertex, index);
+                data.vertices.push(vertex);
+                data.indices.push(index as u32);
+            }
+            // data.vertices.push(vertex);
+            // data.indices.push(data.indices.len() as u32);
+        }
+    }
+
+    println!("vertices: {}", data.vertices.len());
+println!("indices: {}", data.indices.len());
+
+let mut min = vec3(f32::MAX, f32::MAX, f32::MAX);
+let mut max = vec3(f32::MIN, f32::MIN, f32::MIN);
+
+for vertex in &data.vertices {
+    min.x = min.x.min(vertex.pos.x);
+    min.y = min.y.min(vertex.pos.y);
+    min.z = min.z.min(vertex.pos.z);
+
+    max.x = max.x.max(vertex.pos.x);
+    max.y = max.y.max(vertex.pos.y);
+    max.z = max.z.max(vertex.pos.z);
+}
+
+println!("min: {:?}", min);
+println!("max: {:?}", max);
 
     Ok(())
 }
@@ -1508,6 +1598,7 @@ impl App {
         create_texture_image(&instance, &device, &mut data)?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
+        load_model(&mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -1762,6 +1853,8 @@ struct AppData {
     render_finished_semaphore: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
     index_buffer: vk::Buffer,
