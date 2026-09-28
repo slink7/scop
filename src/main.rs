@@ -416,7 +416,7 @@ unsafe fn create_swapchain_image_views(device: &Device, data: &mut AppData) -> R
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
-        .map(|i| create_image_view(device, *i, data.swapchain_format, vk::ImageAspectFlags::COLOR, data.mip_levels))
+        .map(|i| create_image_view(device, *i, data.swapchain_format, vk::ImageAspectFlags::COLOR, 1))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(())
@@ -1671,7 +1671,7 @@ unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &mut 
     data.depth_image = depth_image;
     data.depth_image_memory = depth_image_memory;
 
-    data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH, data.mip_levels)?;
+    data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH, 1)?;
 
     Ok(())
 }
