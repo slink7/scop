@@ -526,12 +526,6 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
         })
         .collect::<Vec<_>>();
 
-    let layers = if VALIDATION_ENABLED {
-        vec![VALIDATION_LAYER.as_ptr()]
-    } else {
-        vec![]
-    };
-
     let mut extensions = DEVICE_EXTENSIONS
         .iter()
         .map(|n| n.as_ptr())
@@ -547,7 +541,6 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
     
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
-        .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .enabled_features(&features);
 
