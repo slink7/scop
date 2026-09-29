@@ -848,16 +848,16 @@ unsafe fn create_command_buffers(
     Ok(())
 }
 
-unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
-    let allocate_info = vk::CommandBufferAllocateInfo::builder()
-        .command_pool(data.command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(data.framebuffers.len() as u32);
-
-    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-
-    Ok(())
-}
+// unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
+//     let allocate_info = vk::CommandBufferAllocateInfo::builder()
+//         .command_pool(data.command_pool)
+//         .level(vk::CommandBufferLevel::PRIMARY)
+//         .command_buffer_count(data.framebuffers.len() as u32);
+//
+//     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+//
+//     Ok(())
+// }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
@@ -1883,7 +1883,7 @@ impl App {
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
-        create_command_buffer(&device, &mut data)?;
+        create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
 
@@ -1905,7 +1905,7 @@ impl App {
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
         create_descriptor_sets(&self.device, &mut self.data)?;
-        create_command_buffer(&self.device, &mut self.data)?;
+        create_command_buffers(&self.device, &mut self.data)?;
 
         self.data.images_in_flight = self.data
             .swapchain_images
@@ -2057,8 +2057,6 @@ impl App {
         self.data.framebuffers
             .iter()
             .for_each(|f| self.device.destroy_framebuffer(*f, None));
-
-        self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
 
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
