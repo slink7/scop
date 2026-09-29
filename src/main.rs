@@ -29,7 +29,8 @@ use anyhow::{anyhow, Result};
 use thiserror::Error;
 
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, WindowEvent, ElementState};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
 
@@ -286,6 +287,15 @@ fn main() -> Result<()> {
         match event {
             Event::AboutToWait => window.request_redraw(),
             Event::WindowEvent { event, .. } => match event {
+                WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::ArrowLeft) if app.models > 1 => app.models -= 1,
+                            PhysicalKey::Code(KeyCode::ArrowRight) if app.models < 4 => app.models += 1,
+                            _ => {}
+                        }
+                    }
+                },
                 WindowEvent::Resized(size) => {
                     if size.width == 0 || size.height == 0 {
                         minimized = true;
@@ -844,6 +854,8 @@ unsafe fn create_command_buffers(
         let command_buffer = device.allocate_command_buffers(&allocate_info)?[0];
         data.command_buffers.push(command_buffer);
     }
+
+    data.secondary_command_buffers = vec![vec![]; data.swapchain_images.len()];
 
     Ok(())
 }
@@ -1773,11 +1785,73 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
+    models: usize,
     it: i32
 }
 
 impl App {
-    
+ 
+    unsafe fn update_secondary_command_buffer(
+        &mut self,
+        image_index: usize,
+        model_index: usize
+    ) -> Result<vk::CommandBuffer> {
+        self.data.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
+
+        let command_buffers = &mut self.data.secondary_command_buffers[image_index];
+        while model_index >= command_buffers.len() {
+            let allocate_info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.data.command_pools[image_index])
+                .level(vk::CommandBufferLevel::SECONDARY)
+                .command_buffer_count(1);
+
+            let command_buffer = self.device.allocate_command_buffers(&allocate_info)?[0];
+            command_buffers.push(command_buffer);
+        }
+
+        let command_buffer = command_buffers[model_index];
+
+        let y = (((model_index % 2) as f32) * 2.5) - 1.25;
+        let z = (((model_index / 2) as f32) * -2.0) + 1.0;
+
+        let time = self.start.elapsed().as_secs_f32();
+
+        let model = Mat4::from_translation(vec3(0.0, y, z)) * Mat4::from_axis_angle(
+            vec3(0.0, 0.0, 1.0),
+            Deg(22.5) * time
+        );
+
+        let model_bytes = &*slice_from_raw_parts(
+            &model as *const Mat4 as *const u8,
+            size_of::<Mat4>()
+        );
+
+        let opacity = (model_index + 1) as f32 * 0.25;
+        let opacity_bytes = &opacity.to_ne_bytes()[..];
+
+        let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
+            .render_pass(self.data.render_pass)
+            .subpass(0)
+            .framebuffer(self.data.framebuffers[image_index]);
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+            .inheritance_info(&inheritance_info);
+        self.device.begin_command_buffer(command_buffer, &info)?;
+
+        self.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
+        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
+        self.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline_layout, 0, &[self.data.descriptor_sets[image_index]], &[]);
+        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
+        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 64, &0.25f32.to_ne_bytes()[..]);
+        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
+
+        self.device.end_command_buffer(command_buffer)?;
+
+        Ok(command_buffer)
+    }
+
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
         // let previous = self.data.command_buffers[image_index];
         // self.device.free_command_buffers(self.data.command_pool, &[previous]);
@@ -1807,9 +1881,7 @@ impl App {
 
         let model_bytes = &*slice_from_raw_parts(
             &model as *const Mat4 as *const u8,
-            size_of::<Mat4>()
-        );
-
+            size_of::<Mat4>());
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
@@ -1836,14 +1908,16 @@ impl App {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
-        self.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
-        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
-        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
-        self.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline_layout, 0, &[self.data.descriptor_sets[image_index]], &[]);
-        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
-        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 64, &0.25f32.to_ne_bytes()[..]);
-        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
+        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
+
+        let secondary_command_buffers = (0..self.models)
+            .map(|i| self.update_secondary_command_buffer(image_index, i))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
+        // let secondary_command_buffer = self.update_secondary_command_buffer(image_index, 0)?;
+        // self.device.cmd_execute_commands(command_buffer, &[secondary_command_buffer]);
+
+
         self.device.cmd_end_render_pass(command_buffer);
         self.device.end_command_buffer(command_buffer)?;
 
@@ -1887,7 +1961,7 @@ impl App {
 
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device, frame: 0, resized: false, start: Instant::now(), it: 0 })
+        Ok(Self { entry, instance, data, device, frame: 0, resized: false, start: Instant::now(), models: 1, it: 0 })
     }
 
     unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
@@ -1925,7 +1999,7 @@ impl App {
         );
 
         let view = Mat4::look_at_rh(
-            point3(2.0, 2.0, 2.0),
+            point3(6.0, 2.0, 2.0),
             point3(0.0, 0.0, 0.0),
             vec3(0.0, 0.0, 1.0)
         );
@@ -2137,6 +2211,7 @@ struct AppData {
     command_pool: vk::CommandPool,
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
+    secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
     image_available_semaphore: Vec<vk::Semaphore>,
     render_finished_semaphore: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
