@@ -803,14 +803,47 @@ unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()>
     Ok(())
 }
 
-unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+unsafe fn create_command_pool(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData
+) -> Result<vk::CommandPool> {
     let indices = QueueFamilyIndicies::get(instance, data, data.physical_device)?;
 
     let info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(indices.graphics);
 
-    data.command_pool = device.create_command_pool(&info, None)?;
+    Ok(device.create_command_pool(&info, None)?)
+}
+
+unsafe fn create_command_pools(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+    data.command_pool = create_command_pool(instance, device, data)?;
+
+    let num_image = data.swapchain_images.len();
+    for _ in 0..num_image {
+        let command_pool = create_command_pool(instance, device, data)?;
+        data.command_pools.push(command_pool);
+    }
+
+    Ok(())
+}
+
+unsafe fn create_command_buffers(
+    device: &Device,
+    data: &mut AppData
+) -> Result<()> {
+    let num_images = data.swapchain_images.len();
+
+    for image_index in 0..num_images {
+        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(data.command_pools[image_index])
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let command_buffer = device.allocate_command_buffers(&allocate_info)?[0];
+        data.command_buffers.push(command_buffer);
+    }
 
     Ok(())
 }
@@ -1746,16 +1779,19 @@ struct App {
 impl App {
     
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
-        let previous = self.data.command_buffers[image_index];
-        self.device.free_command_buffers(self.data.command_pool, &[previous]);
+        // let previous = self.data.command_buffers[image_index];
+        // self.device.free_command_buffers(self.data.command_pool, &[previous]);
         
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.data.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
+        // let allocate_info = vk::CommandBufferAllocateInfo::builder()
+        //     .command_pool(self.data.command_pool)
+        //     .level(vk::CommandBufferLevel::PRIMARY)
+        //     .command_buffer_count(1);
+        
+        let command_pool = self.data.command_pools[image_index];
+        self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
 
-        let command_buffer = self.device.allocate_command_buffers(&allocate_info)?[0];
-        self.data.command_buffers[image_index] = command_buffer;
+        let command_buffer = self.data.command_buffers[image_index];
+        // self.data.command_buffers[image_index] = command_buffer;
 
         self.device.reset_command_buffer(
             command_buffer,
@@ -1834,7 +1870,7 @@ impl App {
         create_pipeline(&device, &mut data)?;
 
 
-        create_command_pool(&instance, &device, &mut data)?;
+        create_command_pools(&instance, &device, &mut data)?;
         create_color_objects(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
@@ -2038,6 +2074,10 @@ impl App {
     unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
 
+        self.data.command_pools
+            .iter()
+            .for_each(|p| self.device.destroy_command_pool(*p, None));
+
         self.device.destroy_sampler(self.data.texture_sampler, None);
 
         self.device.destroy_image_view(self.data.texture_image_view, None);
@@ -2097,6 +2137,7 @@ struct AppData {
     pipeline: vk::Pipeline,
     framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
+    command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphore: Vec<vk::Semaphore>,
     render_finished_semaphore: Vec<vk::Semaphore>,
