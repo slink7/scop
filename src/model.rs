@@ -7,7 +7,7 @@ use std::{
     io::BufReader
 };
 
-use crate::Vertex;
+use crate::vertex::Vertex;
 
 #[derive(Clone, Debug, Default)]
 pub struct Model {
