@@ -7,7 +7,6 @@
 )]
 
 use std::collections::HashSet;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ffi::CStr;
 use std::os::raw::c_void;
@@ -16,9 +15,8 @@ use std::ptr::copy_nonoverlapping as memcpy;
 use std::ptr::slice_from_raw_parts;
 use std::time::Instant;
 use std::fs::File;
-use std::io::BufReader;
 
-use cgmath::{vec2, vec3, point3, Deg};
+use cgmath::{vec3, point3, Deg};
 
 type Vec2 = cgmath::Vector2<f32>;
 type Vec3 = cgmath::Vector3<f32>;
@@ -44,6 +42,10 @@ use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrSwapchainExtensi
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 use vulkanalia::bytecode::Bytecode;
 
+mod model;
+
+use crate::model::Model;
+
 const MODEL_PATH: &str = "assets/viking_room.obj";
 const TEXTURE_PATH: &str = "assets/viking_room.png";
 
@@ -55,39 +57,6 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[
     vk::KHR_SWAPCHAIN_EXTENSION.name
 ];
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
-const RED: Vec3 = vec3(1.0, 0.0, 0.0);
-
-const SC: f32 = -0.25;
-const UV: f32 = 1.0 / 6.0;
-
-// static VERTICES: [Vertex; 20] = [
-//     Vertex::new(vec3(0.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
-//     Vertex::new(vec3(0.0 * SC, -3.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
-//     Vertex::new(vec3(-3.0 * SC, 0.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
-//     Vertex::new(vec3(-3.0 * SC, 1.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(-2.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(-1.0 * SC, 2.0 * SC, 0.0), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(0.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(4.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(5.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(6.0 * UV, 2.0 * UV)),
-//     Vertex::new(vec3(0.0 * SC, -3.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(3.0 * UV, 5.0 * UV)),
-//     Vertex::new(vec3(-3.0 * SC, 0.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 2.0 * UV)),
-//     Vertex::new(vec3(-3.0 * SC, 1.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(0.0 * UV, 1.0 * UV)),
-//     Vertex::new(vec3(-2.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(1.0 * UV, 0.0 * UV)),
-//     Vertex::new(vec3(-1.0 * SC, 2.0 * SC, -0.5), vec3(1.0, 0.0, 0.0), vec2(2.0 * UV, 0.0 * UV)),
-// ];
-
-// const INDICES: &[u16] = &[
-//     5, 4, 3, 5, 3, 2, 5, 2, 1, 5, 1, 0, 5, 0, 9, 5, 9, 8, 5, 8, 7, 5, 7, 6,
-//     15, 14, 13, 15, 13, 12, 15, 12, 11, 15, 11, 10, 15, 10, 19, 15, 19, 18, 15, 18, 17, 15, 17, 16
-// ];
 
 extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -860,17 +829,6 @@ unsafe fn create_command_buffers(
     Ok(())
 }
 
-// unsafe fn create_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
-//     let allocate_info = vk::CommandBufferAllocateInfo::builder()
-//         .command_pool(data.command_pool)
-//         .level(vk::CommandBufferLevel::PRIMARY)
-//         .command_buffer_count(data.framebuffers.len() as u32);
-//
-//     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-//
-//     Ok(())
-// }
-
 unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
     let fence_info = vk::FenceCreateInfo::builder()
@@ -904,7 +862,7 @@ unsafe fn get_memory_type_index(instance: &Instance,data: &AppData, properties: 
 
 unsafe fn create_buffer(
     instance: &Instance,
-    device: &Device,
+    device: &vulkanalia::Device,
     data: &AppData,
     size: vk::DeviceSize,
     usage: vk::BufferUsageFlags,
@@ -938,7 +896,7 @@ unsafe fn create_buffer(
 
 unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
 
-    let size = (size_of::<Vertex>() * data.vertices.len()) as u64;
+    let size = (size_of::<Vertex>() * data.model.vertices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -956,7 +914,7 @@ unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &mut 
         vk::MemoryMapFlags::empty()
     )?;
 
-    memcpy(data.vertices.as_ptr(), memory.cast(), data.vertices.len());
+    memcpy(data.model.vertices.as_ptr(), memory.cast(), data.model.vertices.len());
 
     device.unmap_memory(staging_buffer_memory);
 
@@ -994,7 +952,7 @@ unsafe fn copy_buffer(device: &Device, data: &AppData, source: vk::Buffer, desti
 }
 
 unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-    let size = (size_of::<u32>() * data.indices.len()) as u64;
+    let size = (size_of::<u32>() * data.model.indices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -1012,7 +970,7 @@ unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &mut A
         vk::MemoryMapFlags::empty()
     )?;
 
-    memcpy(data.indices.as_ptr(), memory.cast(), data.indices.len());
+    memcpy(data.model.indices.as_ptr(), memory.cast(), data.model.indices.len());
 
     device.unmap_memory(staging_buffer_memory);
 
@@ -1261,16 +1219,6 @@ unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &mut 
         height,
         data.mip_levels
     )?;
-
-    // transition_image_layout(
-    //     device,
-    //     data, 
-    //     data.texture_image,
-    //     vk::Format::R8G8B8A8_SRGB,
-    //     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-    //     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    //     data.mip_levels
-    // )?;
 
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
@@ -1677,51 +1625,6 @@ unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &mut 
     Ok(())
 }
 
-fn load_model(data: &mut AppData) -> Result<()> {
-    let mut reader = BufReader::new(File::open(MODEL_PATH)?);
-
-    let (models, _) = tobj::load_obj_buf(
-        &mut reader,
-        &tobj::LoadOptions { triangulate: true, ..Default::default() },
-        |_| Ok(Default::default())
-    )?;
-    
-    let mut unique_vertices = HashMap::new();
-
-    for model in &models {
-        for index in &model.mesh.indices {
-            let pos_offset = (3 * index) as usize;
-            let tex_coord_offset = (2 * index) as usize;
-
-            let vertex = Vertex {
-                pos: vec3(
-                    model.mesh.positions[pos_offset + 0],
-                    model.mesh.positions[pos_offset + 1],
-                    model.mesh.positions[pos_offset + 2],
-                ),
-                color: vec3(1.0, 1.0, 1.0),
-                tex_coord: vec2(
-                    model.mesh.texcoords[tex_coord_offset + 0],
-                    1.0 - model.mesh.texcoords[tex_coord_offset + 1]
-                )
-            };
-
-            if let Some(index) = unique_vertices.get(&vertex) {
-                data.indices.push(*index as u32);
-            } else {
-                let index = data.vertices.len();
-                unique_vertices.insert(vertex, index);
-                data.vertices.push(vertex);
-                data.indices.push(index as u32);
-            }
-            // data.vertices.push(vertex);
-            // data.indices.push(data.indices.len() as u32);
-        }
-    }
-
-    Ok(())
-}
-
 unsafe fn get_max_msaa_samples(
     instance: &Instance,
     data: &AppData
@@ -1845,7 +1748,7 @@ impl App {
         self.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline_layout, 0, &[self.data.descriptor_sets[image_index]], &[]);
         self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
         self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 64, &0.25f32.to_ne_bytes()[..]);
-        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
+        self.device.cmd_draw_indexed(command_buffer, self.data.model.indices.len() as u32, 1, 0, 0, 0);
 
         self.device.end_command_buffer(command_buffer)?;
 
@@ -1853,19 +1756,11 @@ impl App {
     }
 
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
-        // let previous = self.data.command_buffers[image_index];
-        // self.device.free_command_buffers(self.data.command_pool, &[previous]);
-        
-        // let allocate_info = vk::CommandBufferAllocateInfo::builder()
-        //     .command_pool(self.data.command_pool)
-        //     .level(vk::CommandBufferLevel::PRIMARY)
-        //     .command_buffer_count(1);
-        
+
         let command_pool = self.data.command_pools[image_index];
         self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
 
         let command_buffer = self.data.command_buffers[image_index];
-        // self.data.command_buffers[image_index] = command_buffer;
 
         self.device.reset_command_buffer(
             command_buffer,
@@ -1951,7 +1846,8 @@ impl App {
         create_texture_image(&instance, &device, &mut data)?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
-        load_model(&mut data)?;
+        // load_model(&mut data)?;
+        data.model = Model::load(MODEL_PATH)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -2216,8 +2112,7 @@ struct AppData {
     render_finished_semaphore: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
+    model: Model,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
     index_buffer: vk::Buffer,
