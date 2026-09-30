@@ -21,6 +21,8 @@ use winit::window::{WindowBuilder};
 mod model;
 mod vertex;
 mod app;
+mod physical_device;
+
 use crate::app::App;
 
 fn main() -> Result<()> {

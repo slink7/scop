@@ -32,6 +32,7 @@ use winit::window::Window;
 
 use crate::model::Model;
 use crate::vertex::Vertex;
+use crate::physical_device::PhysicalDevice;
 
 const MODEL_PATH: &str = "assets/viking_room.obj";
 const TEXTURE_PATH: &str = "assets/viking_room.png";
@@ -207,8 +208,8 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 }
 
 pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut AppData) ->Result<()> {
-    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device)?;
-    let support = SwapchaineSupport::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device.handle)?;
+    let support = SwapchaineSupport::get(instance, data, data.physical_device.handle)?;
 
     let surface_format = get_swapchain_surface_format(&support.formats);
     let present_mode = get_swapchain_present_mode(&support.present_modes);
@@ -298,7 +299,7 @@ pub unsafe fn check_physical_device(
     Ok(())
 }
 
-pub unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
+pub unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<vk::PhysicalDevice> {
     for physical_device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(physical_device);
 
@@ -306,9 +307,7 @@ pub unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> R
             warn!("Skipping physical device (`{}`): {}", properties.device_name, error);
         } else {
             info!("Selected physical device (`{}`).", properties.device_name);
-            data.physical_device = physical_device;
-            data.msaa_samples = get_max_msaa_samples(instance, data);
-            return Ok(());
+            return Ok(physical_device);
         }
     }
 
@@ -350,9 +349,10 @@ impl QueueFamilyIndicies {
     }
 }
 
+
 pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut AppData)
     -> Result<Device> {
-    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device.handle)?;
 
     let mut unique_indices = HashSet::new();
     unique_indices.insert(indices.graphics);
@@ -386,7 +386,7 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
         .enabled_extension_names(&extensions)
         .enabled_features(&features);
 
-    let device = instance.create_device(data.physical_device, &info, None)?;
+    let device = instance.create_device(data.physical_device.handle, &info, None)?;
 
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
     data.present_queue = device.get_device_queue(indices.present, 0);
@@ -650,7 +650,7 @@ pub unsafe fn create_command_pool(
     device: &Device,
     data: &mut AppData
 ) -> Result<vk::CommandPool> {
-    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndicies::get(instance, data, data.physical_device.handle)?;
 
     let info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -711,8 +711,8 @@ pub unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Resul
     Ok(())
 }
 
-pub unsafe fn get_memory_type_index(instance: &Instance,data: &AppData, properties: vk::MemoryPropertyFlags, requirements: vk::MemoryRequirements) -> Result<u32> {
-    let memory = instance.get_physical_device_memory_properties(data.physical_device);
+pub unsafe fn get_memory_type_index(physical_device: &PhysicalDevice, properties: vk::MemoryPropertyFlags, requirements: vk::MemoryRequirements) -> Result<u32> {
+    let memory = physical_device.memory_properties;
 
     (0..memory.memory_type_count)
         .find(|i| {
@@ -724,9 +724,8 @@ pub unsafe fn get_memory_type_index(instance: &Instance,data: &AppData, properti
 }
 
 pub unsafe fn create_buffer(
-    instance: &Instance,
     device: &vulkanalia::Device,
-    data: &AppData,
+    physical_device: &PhysicalDevice,
     size: vk::DeviceSize,
     usage: vk::BufferUsageFlags,
     properties: vk::MemoryPropertyFlags
@@ -744,8 +743,7 @@ pub unsafe fn create_buffer(
     let memory_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
         .memory_type_index(get_memory_type_index(
-            instance,
-            data,
+            physical_device,
             properties,
             requirements
         )?);
@@ -762,9 +760,8 @@ pub unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &
     let size = (size_of::<Vertex>() * data.model.vertices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
-        instance,
         device,
-        data,
+        &data.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -782,9 +779,8 @@ pub unsafe fn create_vertex_buffer(instance: &Instance, device: &Device, data: &
     device.unmap_memory(staging_buffer_memory);
 
     let (vertex_buffer, vertex_buffer_memory) = create_buffer(
-        instance,
         device,
-        data,
+        &data.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
         vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -818,9 +814,8 @@ pub unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &m
     let size = (size_of::<u32>() * data.model.indices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
-        instance,
         device,
-        data,
+        &data.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -838,9 +833,8 @@ pub unsafe fn create_index_buffer(instance: &Instance, device: &Device, data: &m
     device.unmap_memory(staging_buffer_memory);
 
     let (index_buffer, index_buffer_memory) = create_buffer(
-        instance,
         device,
-        data,
+        &data.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
         vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -885,9 +879,8 @@ pub unsafe fn create_uniform_buffers(instance: &Instance, device: &Device, data:
 
     for _ in 0..data.swapchain_images.len() {
         let (uniform_buffer, uniform_buffer_memory) = create_buffer(
-            instance,
             device,
-            data,
+            &data.physical_device,
             size_of::<UniformBufferObject>() as u64,
             vk::BufferUsageFlags::UNIFORM_BUFFER,
             vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -994,8 +987,7 @@ pub unsafe fn create_image(
     let info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
         .memory_type_index(get_memory_type_index(
-            instance,
-            data,
+            &data.physical_device,
             properties,
             requirements
         )?);
@@ -1023,9 +1015,8 @@ pub unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &
     data.mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
-        instance,
         device,
-        data,
+        &data.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -1101,7 +1092,7 @@ pub unsafe fn generate_mipmaps(
 ) -> Result<()> {
 
     if !instance
-        .get_physical_device_format_properties(data.physical_device, format)
+        .get_physical_device_format_properties(data.physical_device.handle, format)
         .optimal_tiling_features
         .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR)
     {
@@ -1439,7 +1430,7 @@ pub unsafe fn get_supported_format(
         .cloned()
         .find(|f| {
             let properties = instance.get_physical_device_format_properties(
-                data.physical_device,
+                data.physical_device.handle,
                 *f
             );
 
@@ -1489,10 +1480,9 @@ pub unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &
 }
 
 pub unsafe fn get_max_msaa_samples(
-    instance: &Instance,
-    data: &AppData
+    physical_device: &PhysicalDevice
 ) -> vk::SampleCountFlags {
-    let properties = instance.get_physical_device_properties(data.physical_device);
+    let properties = physical_device.properties;
     let counts = properties.limits.framebuffer_color_sample_counts & properties.limits.framebuffer_depth_sample_counts;
 
     [
@@ -1690,7 +1680,9 @@ impl App {
 
         data.surface = vk_window::create_surface(&instance, &window, &window)?;
 
-        pick_physical_device(&instance, &mut data)?;
+        let physical_device = pick_physical_device(&instance, &mut data)?;
+        data.physical_device = PhysicalDevice::new(&instance, physical_device);
+        data.msaa_samples = get_max_msaa_samples(&data.physical_device);
 
         let device = create_logical_device(&entry, &instance, &mut data)?;
 
@@ -1953,7 +1945,8 @@ impl App {
 pub struct AppData {
    pub  surface: vk::SurfaceKHR,
    pub  messenger: vk::DebugUtilsMessengerEXT,
-   pub  physical_device: vk::PhysicalDevice,
+   // pub  physical_device: vk::PhysicalDevice,
+   pub  physical_device: PhysicalDevice,
    pub  msaa_samples: vk::SampleCountFlags,
    pub  graphics_queue: vk::Queue,
    pub  present_queue: vk::Queue,
