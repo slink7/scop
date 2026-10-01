@@ -22,6 +22,7 @@ mod model;
 mod vertex;
 mod app;
 mod physical_device;
+mod vulkan_context;
 
 use crate::app::App;
 
@@ -34,6 +35,7 @@ fn main() -> Result<()> {
         .with_inner_size(LogicalSize::new(768, 768))
         .build(&event_loop)?;
 
+    print!("Pre create()");
     let mut app = unsafe { App::create(&window)? };
     let mut minimized = false;
     event_loop.run(move |event, elwt| {
