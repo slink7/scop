@@ -15,9 +15,13 @@ use vulkanalia::vk::{KhrSurfaceExtensionInstanceCommands, StringArray};
 
 use thiserror::Error;
 
+
+
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
+
+
 
 #[derive(Clone, Debug, Default)]
 pub struct SwapchainSupport {
@@ -32,6 +36,7 @@ impl SwapchainSupport {
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice
     ) -> anyhow::Result<Self> {
+        
         Ok(Self {
             capabilities: instance
                 .get_physical_device_surface_capabilities_khr(
@@ -52,6 +57,8 @@ impl SwapchainSupport {
     }
 }
 
+
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct QueueFamilyIndices {
     pub graphics: u32,
@@ -62,21 +69,18 @@ impl QueueFamilyIndices {
     pub unsafe fn get(
         instance: &Instance,
         surface: vk::SurfaceKHR,
-        physical_device: vk::PhysicalDevice
+        physical_device: vk::PhysicalDevice,
+        queue_families: &Vec<vk::QueueFamilyProperties>
     ) -> anyhow::Result<Self> {
-        let properties = instance
-            .get_physical_device_queue_family_properties(
-                physical_device
-            );
-
-        let graphics = properties
+        
+        let graphics = queue_families
             .iter()
             .position(|p| 
                 p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
             .map(|i| i as u32);
 
         let mut present = None;
-        for (index, properties) in properties.iter().enumerate() {
+        for (index, properties) in queue_families.iter().enumerate() {
             if instance.get_physical_device_surface_support_khr(
                 physical_device,
                 index as u32,
@@ -94,6 +98,8 @@ impl QueueFamilyIndices {
         }
     }
 }
+
+
 
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalDevice {
@@ -124,7 +130,7 @@ impl PhysicalDevice {
         let queue_families = instance
             .get_physical_device_queue_family_properties(handle);
         let queue_families_indices = 
-            QueueFamilyIndices::get(instance, surface, handle)?;
+            QueueFamilyIndices::get(instance, surface, handle, &queue_families)?;
         let swapchain_support = 
             SwapchainSupport::get(instance, surface, handle)?;
         let extensions = instance
@@ -149,6 +155,7 @@ impl PhysicalDevice {
         instance: &vulkanalia::Instance,
         surface: vk::SurfaceKHR
     ) -> Result<Self> {
+        
         for handle in instance.enumerate_physical_devices()? {
             let device = Self::from_handle(instance, surface, handle)?;
             
@@ -163,6 +170,7 @@ impl PhysicalDevice {
 
             return Ok(device);
         }
+
         Err(anyhow!("Found no suitable physical device."))
     }
     
@@ -184,6 +192,7 @@ impl PhysicalDevice {
         if DEVICE_EXTENSIONS.iter().any(|e| !self.extensions.contains(e)) {
             return Err(anyhow!(SuitabilityError("Missing required device extensions.")));
         }
+
         Ok(())
     }
 }
