@@ -1266,7 +1266,6 @@ impl App {
         image_index: usize,
         model_index: usize
     ) -> Result<vk::CommandBuffer> {
-        self.data.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
 
         let command_buffers = &mut self.data.secondary_command_buffers[image_index];
         while model_index >= command_buffers.len() {
@@ -1376,8 +1375,6 @@ impl App {
             .map(|i| self.update_secondary_command_buffer(image_index, i))
             .collect::<Result<Vec<_>, _>>()?;
         self.context.device.device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
-        // let secondary_command_buffer = self.update_secondary_command_buffer(image_index, 0)?;
-        // self.context.device.device.cmd_execute_commands(command_buffer, &[secondary_command_buffer]);
         self.context.device.device.cmd_end_render_pass(command_buffer);
         self.context.device.device.end_command_buffer(command_buffer)?;
 
@@ -1385,21 +1382,18 @@ impl App {
     }
 
     pub unsafe fn create(window: &Window) -> Result<Self> {
-        info!("Create - 0");
         let mut data = AppData::default();
         
         let context = VulkanContext::new(window)?;
-        info!("Create - 1");
 
         create_swapchain(window, &context, &mut data)?;
-        info!("Create - 2");
         create_swapchain_image_views(&context.device.device, &mut data)?;
-        info!("Create - 3");
+
+        data.secondary_command_buffers = vec![Vec::new(); data.swapchain_images.len()];
 
         create_render_pass(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
         create_descriptor_set_layout(&context.device.device, &mut data)?;
         create_pipeline(&context.device.device, &mut data, &context.physical_device)?;
-        info!("Create - 4");
 
         create_command_pools(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
         create_color_objects(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
@@ -1408,7 +1402,6 @@ impl App {
         create_texture_image(&context.instance, &context.device.device, &mut data, &context.physical_device, &context.device)?;
         create_texture_image_view(&context.device.device, &mut data)?;
         create_texture_sampler(&context.device.device, &mut data)?;
-        info!("Create - 5");
 
         data.model = Model::load(MODEL_PATH)?;
         create_index_buffer(&context.instance, &context.device.device, &mut data, &context.physical_device, &context.device)?;
@@ -1430,6 +1423,7 @@ impl App {
 
         create_swapchain(window, &self.context, &mut self.data)?;
         create_swapchain_image_views(&self.context.device.device, &mut self.data)?;
+        self.data.secondary_command_buffers = vec![Vec::new(); self.data.swapchain_images.len()];
         create_render_pass(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
         create_pipeline(&self.context.device.device, &mut self.data, &self.context.physical_device)?;
         create_color_objects(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
@@ -1573,12 +1567,37 @@ impl App {
     }
 
     pub unsafe fn destroy_swapchain(&mut self) {
-        self.context.device.device.destroy_image_view(self.data.color_image_view, None);
-        self.context.device.device.free_memory(self.data.color_image_memory, None);
-        self.context.device.device.destroy_image(self.data.color_image, None);
-        self.context.device.device.destroy_image_view(self.data.depth_image_view, None);
-        self.context.device.device.free_memory(self.data.depth_image_memory, None);
-        self.context.device.device.destroy_image(self.data.depth_image, None);
+
+        let device = &self.context.device.device;
+
+for (i, pool) in self.data.command_pools.iter().enumerate() {
+    let mut to_free = Vec::new();
+    if let Some(cb) = self.data.command_buffers.get(i) {
+        to_free.push(*cb);
+    }
+    if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
+        to_free.extend_from_slice(secondaries);
+    }
+    if !to_free.is_empty() {
+        device.free_command_buffers(*pool, &to_free);
+    }
+}
+self.data.command_buffers.clear();
+self.data.secondary_command_buffers.clear();
+
+        // self.context.device.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
+
+        // let device = &self.context.device.device;
+        // for (i, pool) in self.data.command_pools.iter().enumerate() {
+        //     if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
+        //         if !secondaries.is_empty() {
+        //             device.free_command_buffers(*pool, secondaries);
+        //         }
+        //     }
+        //     device.free_command_buffers(*pool, &[self.data.command_buffers[i]]);
+        // }
+        // self.data.secondary_command_buffers.clear();
+
         self.context.device.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
         self.data.uniform_buffers
             .iter()
@@ -1586,6 +1605,14 @@ impl App {
         self.data.uniform_buffers_memory
             .iter()
             .for_each(|m| self.context.device.device.free_memory(*m, None));
+
+        self.context.device.device.destroy_image_view(self.data.depth_image_view, None);
+        self.context.device.device.free_memory(self.data.depth_image_memory, None);
+        self.context.device.device.destroy_image(self.data.depth_image, None);
+
+        self.context.device.device.destroy_image_view(self.data.color_image_view, None);
+        self.context.device.device.free_memory(self.data.color_image_memory, None);
+        self.context.device.device.destroy_image(self.data.color_image, None);
 
         self.data.framebuffers
             .iter()
