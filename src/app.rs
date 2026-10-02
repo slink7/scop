@@ -15,8 +15,7 @@ use anyhow::{anyhow, Result};
 
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::Version;
-use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands};
-use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
+use vulkanalia::vk::{KhrSwapchainExtensionDeviceCommands};
 use vulkanalia::bytecode::Bytecode;
 
 use winit::window::Window;
@@ -1637,14 +1636,7 @@ impl App {
 
         self.context.device.device.destroy_command_pool(self.data.command_pool, None);
 
-        self.context.device.device.destroy_device(None);
-        self.context.instance.destroy_surface_khr(self.context.surface, None);
-
-        if VALIDATION_ENABLED {
-            self.context.instance.destroy_debug_utils_messenger_ext(self.context.messenger, None);
-        }
-
-        self.context.instance.destroy_instance(None);
+        self.context.destroy();
     }
 
 }

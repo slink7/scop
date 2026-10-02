@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use log::*;
 
-use vulkanalia::{loader::{LIBRARY, LibloadingLoader}, prelude::v1_0::*};
+use vulkanalia::{loader::{LIBRARY, LibloadingLoader}, prelude::v1_0::*, vk::KhrSurfaceExtensionInstanceCommands};
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands};
 
 use winit::window::Window;
@@ -187,6 +187,10 @@ impl DeviceContext {
             present_queue
         })
     }
+
+    pub unsafe fn destroy(&mut self) {
+        self.device.destroy_device(None);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -219,6 +223,15 @@ impl VulkanContext {
     }
 
     pub unsafe fn destroy(&mut self) {
-        //TODO
+
+        self.device.destroy();
+
+        if VALIDATION_ENABLED {
+            self.instance.destroy_debug_utils_messenger_ext(self.messenger, None);
+        }
+
+        self.instance.destroy_surface_khr(self.surface, None);
+
+        self.instance.destroy_instance(None);
     }
 }
