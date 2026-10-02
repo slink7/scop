@@ -147,7 +147,7 @@ pub unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<v
     Ok(device.create_shader_module(&info, None)?)
 }
 
-pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
+pub unsafe fn create_pipeline(device: &Device, data: &mut AppData, physical_device: &PhysicalDevice) -> Result<()> {
     let vert = include_bytes!("../target/shaders/shader.vert.spv");
     let frag = include_bytes!("../target/shaders/shader.frag.spv");
 
@@ -204,7 +204,7 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
         .min_sample_shading(0.2)
-        .rasterization_samples(data.msaa_samples);
+        .rasterization_samples(physical_device.max_msaa_samples);
 
     let attachment = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::all())
@@ -276,7 +276,7 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
 pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut AppData, physical_device: &PhysicalDevice) -> Result<()> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain_format)
-        .samples(data.msaa_samples)
+        .samples(physical_device.max_msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -290,7 +290,7 @@ pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mu
 
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
         .format(get_depth_format(instance, physical_device)?)
-        .samples(data.msaa_samples)
+        .samples(physical_device.max_msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1200,7 +1200,7 @@ pub unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &
         data.swapchain_extent.width,
         data.swapchain_extent.height,
         1,
-        data.msaa_samples,
+        physical_device.max_msaa_samples,
         format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -1213,26 +1213,6 @@ pub unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &
     data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH, 1)?;
 
     Ok(())
-}
-
-pub unsafe fn get_max_msaa_samples(
-    physical_device: &PhysicalDevice
-) -> vk::SampleCountFlags {
-    let properties = physical_device.properties;
-    let counts = properties.limits.framebuffer_color_sample_counts & properties.limits.framebuffer_depth_sample_counts;
-
-    [
-        vk::SampleCountFlags::_64,
-        vk::SampleCountFlags::_32,
-        vk::SampleCountFlags::_16,
-        vk::SampleCountFlags::_8,
-        vk::SampleCountFlags::_4,
-        vk::SampleCountFlags::_2,
-    ]
-    .iter()
-    .cloned()
-    .find(|c| counts.contains(*c))
-    .unwrap_or(vk::SampleCountFlags::_1)
 }
 
 pub unsafe fn create_color_objects(
@@ -1248,7 +1228,7 @@ pub unsafe fn create_color_objects(
         data.swapchain_extent.width,
         data.swapchain_extent.height,
         1,
-        data.msaa_samples,
+        physical_device.max_msaa_samples,
         data.swapchain_format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
@@ -1410,7 +1390,6 @@ impl App {
         let mut data = AppData::default();
         
         let context = VulkanContext::new(window)?;
-        data.msaa_samples = get_max_msaa_samples(&context.physical_device);
         info!("Create - 1");
 
         create_swapchain(window, &context, &mut data)?;
@@ -1420,7 +1399,7 @@ impl App {
 
         create_render_pass(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
         create_descriptor_set_layout(&context.device.device, &mut data)?;
-        create_pipeline(&context.device.device, &mut data)?;
+        create_pipeline(&context.device.device, &mut data, &context.physical_device)?;
         info!("Create - 4");
 
         create_command_pools(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
@@ -1453,7 +1432,7 @@ impl App {
         create_swapchain(window, &self.context, &mut self.data)?;
         create_swapchain_image_views(&self.context.device.device, &mut self.data)?;
         create_render_pass(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_pipeline(&self.context.device.device, &mut self.data)?;
+        create_pipeline(&self.context.device.device, &mut self.data, &self.context.physical_device)?;
         create_color_objects(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
         create_depth_objects(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
         create_framebuffers(&self.context.device.device, &mut self.data)?;
@@ -1672,12 +1651,6 @@ impl App {
 
 #[derive(Clone, Debug, Default)]
 pub struct AppData {
-   // pub  surface: vk::SurfaceKHR,
-   // pub  messenger: vk::DebugUtilsMessengerEXT,
-   // pub  physical_device: PhysicalDevice,
-   pub  msaa_samples: vk::SampleCountFlags,
-   // pub  graphics_queue: vk::Queue,
-   // pub  present_queue: vk::Queue,
    pub  swapchain_format: vk::Format,
    pub  swapchain_extent: vk::Extent2D,
    pub  swapchain: vk::SwapchainKHR,

@@ -101,6 +101,29 @@ impl QueueFamilyIndices {
 
 
 
+pub unsafe fn get_max_msaa_samples(
+    properties: vk::PhysicalDeviceProperties
+) -> vk::SampleCountFlags {
+    let counts =
+        properties.limits.framebuffer_color_sample_counts &
+        properties.limits.framebuffer_depth_sample_counts;
+
+    [
+        vk::SampleCountFlags::_64,
+        vk::SampleCountFlags::_32,
+        vk::SampleCountFlags::_16,
+        vk::SampleCountFlags::_8,
+        vk::SampleCountFlags::_4,
+        vk::SampleCountFlags::_2,
+    ]
+    .iter()
+    .cloned()
+    .find(|c| counts.contains(*c))
+    .unwrap_or(vk::SampleCountFlags::_1)
+}
+
+
+
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalDevice {
     pub handle: vk::PhysicalDevice,
@@ -110,7 +133,8 @@ pub struct PhysicalDevice {
     pub queue_families: Vec<vk::QueueFamilyProperties>,
     pub queue_families_indices: QueueFamilyIndices,
     pub swapchain_support: SwapchainSupport,
-    pub extensions: HashSet<StringArray<256>>
+    pub extensions: HashSet<StringArray<256>>,
+    pub max_msaa_samples: vk::SampleCountFlags
 }
 
 impl PhysicalDevice {
@@ -138,6 +162,7 @@ impl PhysicalDevice {
             .iter()
             .map(|e| e.extension_name)
             .collect::<HashSet<_>>();
+        let max_msaa_samples = get_max_msaa_samples(properties);
 
         Ok(Self {
             handle,
@@ -147,7 +172,8 @@ impl PhysicalDevice {
             queue_families,
             queue_families_indices,
             swapchain_support,
-            extensions
+            extensions,
+            max_msaa_samples
         })
     }
 
