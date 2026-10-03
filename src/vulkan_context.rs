@@ -10,7 +10,7 @@ use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands};
 
 use winit::window::Window;
 
-use crate::app::VALIDATION_ENABLED;
+use crate::{app::VALIDATION_ENABLED, window_context::WindowContext};
 use crate::physical_device::{
         PhysicalDevice
 };
@@ -204,22 +204,27 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    pub unsafe fn new(window: &Window) -> Result<Self> {
+    pub unsafe fn new(window: Window) -> Result<(Self, WindowContext)> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
-        let instance = create_instance(window, &entry)?;
+        let instance = create_instance(&window, &entry)?;
         let messenger = create_debug_messenger(&instance).unwrap_or_default();
         let surface = vulkanalia::window::create_surface(&instance, &window, &window)?;
         let physical_device = PhysicalDevice::new(&instance, surface)?;
         let device = DeviceContext::new(&entry, &instance, &physical_device)?;
-        Ok(Self {
+
+
+        let vulkan = Self {
             instance,
             messenger,
             physical_device,
             device,
             surface,
             entry
-        })
+        };
+        let window = WindowContext::from_surface(&vulkan, window, surface)?;
+
+        Ok((vulkan, window))
     }
 
     pub unsafe fn destroy(&mut self) {

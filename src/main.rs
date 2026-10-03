@@ -23,6 +23,7 @@ mod vertex;
 mod app;
 mod physical_device;
 mod vulkan_context;
+mod window_context;
 
 use crate::app::App;
 
@@ -35,12 +36,11 @@ fn main() -> Result<()> {
         .with_inner_size(LogicalSize::new(768, 768))
         .build(&event_loop)?;
 
-    print!("Pre create()");
-    let mut app = unsafe { App::create(&window)? };
+    let mut app = unsafe { App::create(window)? };
     let mut minimized = false;
     event_loop.run(move |event, elwt| {
         match event {
-            Event::AboutToWait => window.request_redraw(),
+            Event::AboutToWait => app.request_redraw(),
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state == ElementState::Pressed {
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
                     }
                 },
                 WindowEvent::RedrawRequested if !elwt.exiting() && !minimized => unsafe {
-                    if let Err(e) = app.render(&window) {
+                    if let Err(e) = app.render() {
                         eprintln!("render error: {e:?}");
                         elwt.exit();
                     }

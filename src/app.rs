@@ -27,6 +27,7 @@ use crate::vertex::Vertex;
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_context::DeviceContext;
 use crate::vulkan_context::VulkanContext;
+use crate::window_context::WindowContext;
 
 const MODEL_PATH: &str = "assets/viking_room.obj";
 const TEXTURE_PATH: &str = "assets/viking_room.png";
@@ -1248,7 +1249,7 @@ pub unsafe fn create_color_objects(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct App {
     pub context: VulkanContext,
     pub data: AppData,
@@ -1256,6 +1257,7 @@ pub struct App {
     pub resized: bool,
     pub start: Instant,
     pub models: usize,
+    pub window: WindowContext,
     pub it: i32
 }
 
@@ -1381,47 +1383,51 @@ impl App {
         Ok(())
     }
 
-    pub unsafe fn create(window: &Window) -> Result<Self> {
+    pub unsafe fn create(window: Window) -> Result<Self> {
         let mut data = AppData::default();
         
-        let context = VulkanContext::new(window)?;
+        let (vulkan, window) = VulkanContext::new(window)?;
 
-        create_swapchain(window, &context, &mut data)?;
-        create_swapchain_image_views(&context.device.device, &mut data)?;
+        create_swapchain(&window.window, &vulkan, &mut data)?;
+        create_swapchain_image_views(&vulkan.device.device, &mut data)?;
 
         data.secondary_command_buffers = vec![Vec::new(); data.swapchain_images.len()];
 
-        create_render_pass(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
-        create_descriptor_set_layout(&context.device.device, &mut data)?;
-        create_pipeline(&context.device.device, &mut data, &context.physical_device)?;
+        create_render_pass(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_descriptor_set_layout(&vulkan.device.device, &mut data)?;
+        create_pipeline(&vulkan.device.device, &mut data, &vulkan.physical_device)?;
 
-        create_command_pools(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
-        create_color_objects(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
-        create_depth_objects(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
-        create_framebuffers(&context.device.device, &mut data)?;
-        create_texture_image(&context.instance, &context.device.device, &mut data, &context.physical_device, &context.device)?;
-        create_texture_image_view(&context.device.device, &mut data)?;
-        create_texture_sampler(&context.device.device, &mut data)?;
+        create_command_pools(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_color_objects(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_depth_objects(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_framebuffers(&vulkan.device.device, &mut data)?;
+        create_texture_image(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
+        create_texture_image_view(&vulkan.device.device, &mut data)?;
+        create_texture_sampler(&vulkan.device.device, &mut data)?;
 
         data.model = Model::load(MODEL_PATH)?;
-        create_index_buffer(&context.instance, &context.device.device, &mut data, &context.physical_device, &context.device)?;
-        create_vertex_buffer(&context.instance, &context.device.device, &mut data, &context.physical_device, &context.device)?;
-        create_uniform_buffers(&context.instance, &context.device.device, &mut data, &context.physical_device)?;
-        create_descriptor_pool(&context.device.device, &mut data)?;
-        create_descriptor_sets(&context.device.device, &mut data)?;
-        create_command_buffers(&context.device.device, &mut data)?;
+        create_index_buffer(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
+        create_vertex_buffer(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
+        create_uniform_buffers(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_descriptor_pool(&vulkan.device.device, &mut data)?;
+        create_descriptor_sets(&vulkan.device.device, &mut data)?;
+        create_command_buffers(&vulkan.device.device, &mut data)?;
 
-        create_sync_objects(&context.device.device, &mut data)?;
+        create_sync_objects(&vulkan.device.device, &mut data)?;
 
-        Ok(Self { context, data, frame: 0, resized: false, start: Instant::now(), models: 1, it: 0 })
+        Ok(Self { context: vulkan, data, frame: 0, resized: false, start: Instant::now(), models: 1, window, it: 0 })
     }
 
-    pub unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+    pub fn request_redraw(&self) {
+        self.window.window.request_redraw();
+    }
+
+    pub unsafe fn recreate_swapchain(&mut self) -> Result<()> {
 
         self.context.device.device.device_wait_idle()?;
         self.destroy_swapchain();
 
-        create_swapchain(window, &self.context, &mut self.data)?;
+        create_swapchain(&self.window.window, &self.context, &mut self.data)?;
         create_swapchain_image_views(&self.context.device.device, &mut self.data)?;
         self.data.secondary_command_buffers = vec![Vec::new(); self.data.swapchain_images.len()];
         create_render_pass(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
@@ -1486,7 +1492,7 @@ impl App {
         Ok(())
     }
 
-    pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
+    pub unsafe fn render(&mut self) -> Result<()> {
 
         self.context.device.device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
@@ -1502,7 +1508,7 @@ impl App {
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
-                return self.recreate_swapchain(window)
+                return self.recreate_swapchain()
             },
             Err(e) => {
                 return Err(anyhow!(e))
@@ -1550,7 +1556,7 @@ impl App {
 
         if self.resized || changed {
             self.resized = false;
-            self.recreate_swapchain(window)?;
+            self.recreate_swapchain()?;
         } else if let Err(e) = result {
             return Err(anyhow!(e));
         }
