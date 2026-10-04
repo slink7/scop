@@ -20,7 +20,7 @@ use vulkanalia::bytecode::Bytecode;
 
 use winit::window::Window;
 
-use log::*;
+// use log::*;
 
 use crate::model::Model;
 use crate::vertex::Vertex;
@@ -1251,7 +1251,6 @@ pub unsafe fn create_color_objects(
 
 #[derive(Debug)]
 pub struct App {
-    pub context: VulkanContext,
     pub data: AppData,
     pub frame: usize,
     pub resized: bool,
@@ -1265,6 +1264,7 @@ impl App {
  
     pub unsafe fn update_secondary_command_buffer(
         &mut self,
+        vulkan: &VulkanContext,
         image_index: usize,
         model_index: usize
     ) -> Result<vk::CommandBuffer> {
@@ -1276,7 +1276,7 @@ impl App {
                 .level(vk::CommandBufferLevel::SECONDARY)
                 .command_buffer_count(1);
 
-            let command_buffer = self.context.device.device.allocate_command_buffers(&allocate_info)?[0];
+            let command_buffer = vulkan.device.device.allocate_command_buffers(&allocate_info)?[0];
             command_buffers.push(command_buffer);
         }
 
@@ -1308,29 +1308,32 @@ impl App {
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
             .inheritance_info(&inheritance_info);
-        self.context.device.device.begin_command_buffer(command_buffer, &info)?;
+        vulkan.device.device.begin_command_buffer(command_buffer, &info)?;
 
-        self.context.device.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
-        self.context.device.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
-        self.context.device.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
-        self.context.device.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline_layout, 0, &[self.data.descriptor_sets[image_index]], &[]);
-        self.context.device.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
-        self.context.device.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 64, opacity_bytes);
-        self.context.device.device.cmd_draw_indexed(command_buffer, self.data.model.indices.len() as u32, 1, 0, 0, 0);
+        vulkan.device.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
+        vulkan.device.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        vulkan.device.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
+        vulkan.device.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline_layout, 0, &[self.data.descriptor_sets[image_index]], &[]);
+        vulkan.device.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
+        vulkan.device.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 64, opacity_bytes);
+        vulkan.device.device.cmd_draw_indexed(command_buffer, self.data.model.indices.len() as u32, 1, 0, 0, 0);
 
-        self.context.device.device.end_command_buffer(command_buffer)?;
+        vulkan.device.device.end_command_buffer(command_buffer)?;
 
         Ok(command_buffer)
     }
 
-    pub unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
+    pub unsafe fn update_command_buffer(
+        &mut self,
+        vulkan: &VulkanContext,
+        image_index: usize) -> Result<()> {
 
         let command_pool = self.data.command_pools[image_index];
-        self.context.device.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
+        vulkan.device.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
 
         let command_buffer = self.data.command_buffers[image_index];
 
-        self.context.device.device.reset_command_buffer(
+        vulkan.device.device.reset_command_buffer(
             command_buffer,
             vk::CommandBufferResetFlags::empty()
         )?;
@@ -1348,7 +1351,7 @@ impl App {
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-        self.context.device.device.begin_command_buffer(command_buffer, &info)?;
+        vulkan.device.device.begin_command_buffer(command_buffer, &info)?;
 
         let render_area = vk::Rect2D::builder()
             .offset(vk::Offset2D::default())
@@ -1371,23 +1374,24 @@ impl App {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        self.context.device.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
+        vulkan.device.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
 
         let secondary_command_buffers = (0..self.models)
-            .map(|i| self.update_secondary_command_buffer(image_index, i))
+            .map(|i| self.update_secondary_command_buffer(vulkan, image_index, i))
             .collect::<Result<Vec<_>, _>>()?;
-        self.context.device.device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
-        self.context.device.device.cmd_end_render_pass(command_buffer);
-        self.context.device.device.end_command_buffer(command_buffer)?;
+        vulkan.device.device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
+        vulkan.device.device.cmd_end_render_pass(command_buffer);
+        vulkan.device.device.end_command_buffer(command_buffer)?;
 
         Ok(())
     }
 
-    pub unsafe fn create(window: Window) -> Result<Self> {
+    pub unsafe fn create(
+        vulkan: &VulkanContext,
+        window: WindowContext
+    ) -> Result<Self> {
         let mut data = AppData::default();
         
-        let (vulkan, window) = VulkanContext::new(window)?;
-
         create_swapchain(&window.window, &vulkan, &mut data)?;
         create_swapchain_image_views(&vulkan.device.device, &mut data)?;
 
@@ -1415,30 +1419,29 @@ impl App {
 
         create_sync_objects(&vulkan.device.device, &mut data)?;
 
-        Ok(Self { context: vulkan, data, frame: 0, resized: false, start: Instant::now(), models: 1, window, it: 0 })
+        Ok(Self { data, frame: 0, resized: false, start: Instant::now(), models: 1, window, it: 0 })
     }
 
-    pub fn request_redraw(&self) {
-        self.window.window.request_redraw();
-    }
+    pub unsafe fn recreate_swapchain(
+        &mut self,
+        vulkan: &VulkanContext,
+    ) -> Result<()> {
 
-    pub unsafe fn recreate_swapchain(&mut self) -> Result<()> {
+        vulkan.device.device.device_wait_idle()?;
+        self.destroy_swapchain(vulkan);
 
-        self.context.device.device.device_wait_idle()?;
-        self.destroy_swapchain();
-
-        create_swapchain(&self.window.window, &self.context, &mut self.data)?;
-        create_swapchain_image_views(&self.context.device.device, &mut self.data)?;
+        create_swapchain(&self.window.window, &vulkan, &mut self.data)?;
+        create_swapchain_image_views(&vulkan.device.device, &mut self.data)?;
         self.data.secondary_command_buffers = vec![Vec::new(); self.data.swapchain_images.len()];
-        create_render_pass(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_pipeline(&self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_color_objects(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_depth_objects(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_framebuffers(&self.context.device.device, &mut self.data)?;
-        create_uniform_buffers(&self.context.instance, &self.context.device.device, &mut self.data, &self.context.physical_device)?;
-        create_descriptor_pool(&self.context.device.device, &mut self.data)?;
-        create_descriptor_sets(&self.context.device.device, &mut self.data)?;
-        create_command_buffers(&self.context.device.device, &mut self.data)?;
+        create_render_pass(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_pipeline(&vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_color_objects(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_depth_objects(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_framebuffers(&vulkan.device.device, &mut self.data)?;
+        create_uniform_buffers(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_descriptor_pool(&vulkan.device.device, &mut self.data)?;
+        create_descriptor_sets(&vulkan.device.device, &mut self.data)?;
+        create_command_buffers(&vulkan.device.device, &mut self.data)?;
 
         self.data.images_in_flight = self.data
             .swapchain_images
@@ -1449,7 +1452,11 @@ impl App {
         Ok(())
     }    
 
-    pub unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
+    pub unsafe fn update_uniform_buffer(
+        &self,
+        vulkan: &VulkanContext,
+        image_index: usize
+    ) -> Result<()> {
         let time = self.start.elapsed().as_secs_f32();
 
         let model = Mat4::from_axis_angle(
@@ -1478,7 +1485,7 @@ impl App {
 
         let ubo = UniformBufferObject { view, proj };
 
-        let memory = self.context.device.device.map_memory(
+        let memory = vulkan.device.device.map_memory(
             self.data.uniform_buffers_memory[image_index],
             0,
             size_of::<UniformBufferObject>() as u64,
@@ -1487,17 +1494,20 @@ impl App {
 
         memcpy(&ubo, memory.cast(), 1);
 
-        self.context.device.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
+        vulkan.device.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
 
         Ok(())
     }
 
-    pub unsafe fn render(&mut self) -> Result<()> {
+    pub unsafe fn render(
+        &mut self,
+        vulkan: &VulkanContext
+    ) -> Result<()> {
 
-        self.context.device.device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
+        vulkan.device.device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
-        let result = self
-            .context.device.device
+        let result = vulkan
+            .device.device
             .acquire_next_image_khr(
                 self.data.swapchain, 
                 u64::MAX,
@@ -1508,7 +1518,7 @@ impl App {
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
-                return self.recreate_swapchain()
+                return self.recreate_swapchain(vulkan)
             },
             Err(e) => {
                 return Err(anyhow!(e))
@@ -1516,7 +1526,7 @@ impl App {
         };
 
         if !self.data.images_in_flight[image_index as usize].is_null() {
-            self.context.device.device.wait_for_fences(
+            vulkan.device.device.wait_for_fences(
                 &[self.data.images_in_flight[image_index as usize]],
                 true,
                 u64::MAX
@@ -1525,8 +1535,8 @@ impl App {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
-        self.update_command_buffer(image_index)?;
-        self.update_uniform_buffer(image_index)?;
+        self.update_command_buffer(vulkan, image_index)?;
+        self.update_uniform_buffer(vulkan, image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphore[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -1538,9 +1548,9 @@ impl App {
             .command_buffers(commands_buffers)
             .signal_semaphores(signal_semaphores);
 
-        self.context.device.device.reset_fences(&[self.data.in_flight_fences[self.frame]])?;
+        vulkan.device.device.reset_fences(&[self.data.in_flight_fences[self.frame]])?;
 
-        self.context.device.device.queue_submit(self.context.device.graphics_queue, &[submit_info], self.data.in_flight_fences[self.frame])?;
+        vulkan.device.device.queue_submit(vulkan.device.graphics_queue, &[submit_info], self.data.in_flight_fences[self.frame])?;
 
         let swapchains = &[self.data.swapchain];
         let image_indices = &[image_index as u32];
@@ -1549,19 +1559,19 @@ impl App {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        let result = self.context.device.device.queue_present_khr(self.context.device.present_queue, &present_info);
+        let result = vulkan.device.device.queue_present_khr(vulkan.device.present_queue, &present_info);
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR)
             || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 
         if self.resized || changed {
             self.resized = false;
-            self.recreate_swapchain()?;
+            self.recreate_swapchain(vulkan)?;
         } else if let Err(e) = result {
             return Err(anyhow!(e));
         }
 
-        self.context.device.device.queue_wait_idle(self.context.device.present_queue)?;
+        vulkan.device.device.queue_wait_idle(vulkan.device.present_queue)?;
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -1572,9 +1582,12 @@ impl App {
         Ok(())
     }
 
-    pub unsafe fn destroy_swapchain(&mut self) {
+    pub unsafe fn destroy_swapchain(
+        &mut self,
+        vulkan: &VulkanContext
+    ) {
 
-        let device = &self.context.device.device;
+        let device = &vulkan.device.device;
 
 for (i, pool) in self.data.command_pools.iter().enumerate() {
     let mut to_free = Vec::new();
@@ -1591,9 +1604,9 @@ for (i, pool) in self.data.command_pools.iter().enumerate() {
 self.data.command_buffers.clear();
 self.data.secondary_command_buffers.clear();
 
-        // self.context.device.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
+        // vulkan.device.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
 
-        // let device = &self.context.device.device;
+        // let device = &vulkan.device.device;
         // for (i, pool) in self.data.command_pools.iter().enumerate() {
         //     if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
         //         if !secondaries.is_empty() {
@@ -1604,72 +1617,77 @@ self.data.secondary_command_buffers.clear();
         // }
         // self.data.secondary_command_buffers.clear();
 
-        self.context.device.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
+        vulkan.device.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
         self.data.uniform_buffers
             .iter()
-            .for_each(|b| self.context.device.device.destroy_buffer(*b, None));
+            .for_each(|b| vulkan.device.device.destroy_buffer(*b, None));
         self.data.uniform_buffers_memory
             .iter()
-            .for_each(|m| self.context.device.device.free_memory(*m, None));
+            .for_each(|m| vulkan.device.device.free_memory(*m, None));
 
-        self.context.device.device.destroy_image_view(self.data.depth_image_view, None);
-        self.context.device.device.free_memory(self.data.depth_image_memory, None);
-        self.context.device.device.destroy_image(self.data.depth_image, None);
+        vulkan.device.device.destroy_image_view(self.data.depth_image_view, None);
+        vulkan.device.device.free_memory(self.data.depth_image_memory, None);
+        vulkan.device.device.destroy_image(self.data.depth_image, None);
 
-        self.context.device.device.destroy_image_view(self.data.color_image_view, None);
-        self.context.device.device.free_memory(self.data.color_image_memory, None);
-        self.context.device.device.destroy_image(self.data.color_image, None);
+        vulkan.device.device.destroy_image_view(self.data.color_image_view, None);
+        vulkan.device.device.free_memory(self.data.color_image_memory, None);
+        vulkan.device.device.destroy_image(self.data.color_image, None);
 
         self.data.framebuffers
             .iter()
-            .for_each(|f| self.context.device.device.destroy_framebuffer(*f, None));
+            .for_each(|f| vulkan.device.device.destroy_framebuffer(*f, None));
 
-        self.context.device.device.destroy_pipeline(self.data.pipeline, None);
-        self.context.device.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
-        self.context.device.device.destroy_render_pass(self.data.render_pass, None);
+        vulkan.device.device.destroy_pipeline(self.data.pipeline, None);
+        vulkan.device.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
+        vulkan.device.device.destroy_render_pass(self.data.render_pass, None);
 
         self.data.swapchain_image_views
             .iter()
-            .for_each(|v| self.context.device.device.destroy_image_view(*v, None));
+            .for_each(|v| vulkan.device.device.destroy_image_view(*v, None));
 
-        self.context.device.device.destroy_swapchain_khr(self.data.swapchain, None);
+        vulkan.device.device.destroy_swapchain_khr(self.data.swapchain, None);
     }
 
-    pub unsafe fn destroy(&mut self) {
-        self.destroy_swapchain();
+    pub unsafe fn destroy(
+        &mut self,
+        vulkan: &VulkanContext
+    ) {
+        self.destroy_swapchain(vulkan);
 
         self.data.command_pools
             .iter()
-            .for_each(|p| self.context.device.device.destroy_command_pool(*p, None));
+            .for_each(|p| vulkan.device.device.destroy_command_pool(*p, None));
 
-        self.context.device.device.destroy_sampler(self.data.texture_sampler, None);
+        vulkan.device.device.destroy_sampler(self.data.texture_sampler, None);
 
-        self.context.device.device.destroy_image_view(self.data.texture_image_view, None);
+        vulkan.device.device.destroy_image_view(self.data.texture_image_view, None);
 
-        self.context.device.device.destroy_image(self.data.texture_image, None);
-        self.context.device.device.free_memory(self.data.texture_image_memory, None);
+        vulkan.device.device.destroy_image(self.data.texture_image, None);
+        vulkan.device.device.free_memory(self.data.texture_image_memory, None);
 
-        self.context.device.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
+        vulkan.device.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
 
-        self.context.device.device.destroy_buffer(self.data.index_buffer, None);
-        self.context.device.device.free_memory(self.data.index_buffer_memory, None);
-        self.context.device.device.destroy_buffer(self.data.vertex_buffer, None);
-        self.context.device.device.free_memory(self.data.vertex_buffer_memory, None);
+        vulkan.device.device.destroy_buffer(self.data.index_buffer, None);
+        vulkan.device.device.free_memory(self.data.index_buffer_memory, None);
+        vulkan.device.device.destroy_buffer(self.data.vertex_buffer, None);
+        vulkan.device.device.free_memory(self.data.vertex_buffer_memory, None);
 
         self.data.in_flight_fences
             .iter()
-            .for_each(|f| self.context.device.device.destroy_fence(*f, None));
+            .for_each(|f| vulkan.device.device.destroy_fence(*f, None));
 
         self.data.render_finished_semaphore
             .iter()
-            .for_each(|s| self.context.device.device.destroy_semaphore(*s, None));
+            .for_each(|s| vulkan.device.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphore
             .iter()
-            .for_each(|s| self.context.device.device.destroy_semaphore(*s, None));
+            .for_each(|s| vulkan.device.device.destroy_semaphore(*s, None));
 
-        self.context.device.device.destroy_command_pool(self.data.command_pool, None);
+        vulkan.device.device.destroy_command_pool(self.data.command_pool, None);
+    }
 
-        self.context.destroy();
+    pub fn request_redraw(&self) {
+        self.window.window.request_redraw();
     }
 
 }

@@ -26,6 +26,7 @@ mod vulkan_context;
 mod window_context;
 
 use crate::app::App;
+use crate::vulkan_context::VulkanContext;
 
 fn main() -> Result<()> {
     pretty_env_logger::init();
@@ -36,11 +37,17 @@ fn main() -> Result<()> {
         .with_inner_size(LogicalSize::new(768, 768))
         .build(&event_loop)?;
 
-    let mut app = unsafe { App::create(window)? };
+    let (mut vulkan, window) = unsafe { VulkanContext::new(window)? };
+
+    let mut app = unsafe { App::create(&vulkan, window)? };
     let mut minimized = false;
     event_loop.run(move |event, elwt| {
         match event {
             Event::AboutToWait => app.request_redraw(),
+            Event::LoopExiting => unsafe {
+                app.destroy(&vulkan);
+                vulkan.destroy();
+            },
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state == ElementState::Pressed {
@@ -60,16 +67,13 @@ fn main() -> Result<()> {
                     }
                 },
                 WindowEvent::RedrawRequested if !elwt.exiting() && !minimized => unsafe {
-                    if let Err(e) = app.render() {
+                    if let Err(e) = app.render(&vulkan) {
                         eprintln!("render error: {e:?}");
                         elwt.exit();
                     }
                 },
                 WindowEvent::CloseRequested => {
                     elwt.exit();
-                    unsafe {
-                        app.destroy();
-                    }
                 }
                 _ => {}
             }
