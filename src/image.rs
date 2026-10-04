@@ -6,7 +6,6 @@ use vulkanalia::vk::{Extent2D};
 
 use crate::physical_device::{self, PhysicalDevice};
 use crate::vulkan_context::VulkanContext;
-use crate::app::get_memory_type_index;
 
 pub unsafe fn create_image(
     device: &Device,
@@ -39,11 +38,12 @@ pub unsafe fn create_image(
 
     let info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
-        .memory_type_index(get_memory_type_index(
-            &physical_device,
-            properties,
-            requirements
-        )?);
+        .memory_type_index(
+            physical_device.memory_type_index(
+                properties,
+                requirements
+            )?
+        );
 
     let image_memory = device.allocate_memory(&info, None)?;
 

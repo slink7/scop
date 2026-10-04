@@ -22,6 +22,7 @@ use winit::window::Window;
 
 // use log::*;
 
+use crate::buffer::Buffer;
 use crate::image::Image;
 use crate::model::Model;
 use crate::vertex::Vertex;
@@ -592,21 +593,29 @@ pub unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) 
     Ok(())
 }
 
-pub unsafe fn create_uniform_buffers(instance: &Instance, device: &Device, data: &mut AppData, physical_device: &PhysicalDevice) -> Result<()> {
-    data.uniform_buffers.clear();
-    data.uniform_buffers_memory.clear();
+pub unsafe fn create_uniform_buffers(vulkan: &VulkanContext, data: &mut AppData) -> Result<()> {
+    // data.uniform_buffers.clear();
+    // data.uniform_buffers_memory.clear();
+    data.uniforms.clear();
 
     for _ in 0..data.swapchain_images.len() {
-        let (uniform_buffer, uniform_buffer_memory) = create_buffer(
-            device,
-            &physical_device,
+        // let (uniform_buffer, uniform_buffer_memory) = create_buffer(
+        //     device,
+        //     &physical_device,
+        //     size_of::<UniformBufferObject>() as u64,
+        //     vk::BufferUsageFlags::UNIFORM_BUFFER,
+        //     vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
+        // )?;
+        
+        // data.uniform_buffers.push(uniform_buffer);
+        // data.uniform_buffers_memory.push(uniform_buffer_memory);
+        data.uniforms.push(Buffer::new(
+            vulkan,
             size_of::<UniformBufferObject>() as u64,
             vk::BufferUsageFlags::UNIFORM_BUFFER,
-            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
-        )?;
-
-        data.uniform_buffers.push(uniform_buffer);
-        data.uniform_buffers_memory.push(uniform_buffer_memory);
+            vk::MemoryPropertyFlags::HOST_COHERENT |
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+        )?); 
     }
     Ok(())
 }
@@ -641,7 +650,7 @@ pub unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Res
 
     for i in 0..data.swapchain_images.len() {
         let info = vk::DescriptorBufferInfo::builder()
-            .buffer(data.uniform_buffers[i])
+            .buffer(data.uniforms[i].handle)
             .offset(0)
             .range(size_of::<UniformBufferObject>() as u64);
 
@@ -1313,7 +1322,7 @@ impl App {
         data.model = Model::load(MODEL_PATH)?;
         create_index_buffer(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
         create_vertex_buffer(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
-        create_uniform_buffers(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        create_uniform_buffers(vulkan, &mut data)?;
         create_descriptor_pool(&vulkan.device.device, &mut data)?;
         create_descriptor_sets(&vulkan.device.device, &mut data)?;
         create_command_buffers(&vulkan.device.device, &mut data)?;
@@ -1339,7 +1348,7 @@ impl App {
         self.data.color = Image::new_color(vulkan, self.data.swapchain_extent, self.data.swapchain_format)?;
         self.data.depth = Image::new_depth(vulkan, self.data.swapchain_extent)?;
         create_framebuffers(&vulkan.device.device, &mut self.data)?;
-        create_uniform_buffers(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        create_uniform_buffers(vulkan, &mut self.data)?;
         create_descriptor_pool(&vulkan.device.device, &mut self.data)?;
         create_descriptor_sets(&vulkan.device.device, &mut self.data)?;
         create_command_buffers(&vulkan.device.device, &mut self.data)?;
@@ -1387,7 +1396,7 @@ impl App {
         let ubo = UniformBufferObject { view, proj };
 
         let memory = vulkan.device.device.map_memory(
-            self.data.uniform_buffers_memory[image_index],
+            self.data.uniforms[image_index].memory,
             0,
             size_of::<UniformBufferObject>() as u64,
             vk::MemoryMapFlags::empty()
@@ -1395,7 +1404,7 @@ impl App {
 
         memcpy(&ubo, memory.cast(), 1);
 
-        vulkan.device.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
+        vulkan.device.device.unmap_memory(self.data.uniforms[image_index].memory);
 
         Ok(())
     }
@@ -1505,12 +1514,15 @@ impl App {
         self.data.secondary_command_buffers.clear();
 
         vulkan.device.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
-        self.data.uniform_buffers
-            .iter()
-            .for_each(|b| vulkan.device.device.destroy_buffer(*b, None));
-        self.data.uniform_buffers_memory
-            .iter()
-            .for_each(|m| vulkan.device.device.free_memory(*m, None));
+        // self.data.uniform_buffers
+        //     .iter()
+        //     .for_each(|b| vulkan.device.device.destroy_buffer(*b, None));
+        // self.data.uniform_buffers_memory
+        //     .iter()
+        //     .for_each(|m| vulkan.device.device.free_memory(*m, None));
+        self.data.uniforms
+            .iter_mut()
+            .for_each(|b| b.destroy(vulkan));
 
         self.data.color.destroy(vulkan);
         self.data.depth.destroy(vulkan);
@@ -1599,8 +1611,9 @@ pub struct AppData {
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
-    pub uniform_buffers: Vec<vk::Buffer>,
-    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    pub uniforms: Vec<Buffer>,
+    // pub uniform_buffers: Vec<vk::Buffer>,
+    // pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
     pub mip_levels: u32,

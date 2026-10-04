@@ -26,6 +26,7 @@ mod vulkan_context;
 mod window_context;
 mod image;
 mod texture;
+mod buffer;
 
 use crate::app::App;
 use crate::vulkan_context::VulkanContext;
