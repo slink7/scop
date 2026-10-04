@@ -257,4 +257,20 @@ impl PhysicalDevice {
 
         Ok(())
     }
+
+    pub fn memory_type_index(
+        &self,
+        properties: vk::MemoryPropertyFlags,
+        requirements: vk::MemoryRequirements
+    ) -> Result<u32> {
+    let memory = self.memory_properties;
+
+    (0..memory.memory_type_count)
+        .find(|i| {
+            let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
+            let memory_type = memory.memory_types[*i as usize];
+            suitable && memory_type.property_flags.contains(properties)
+        })
+        .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
+    }
 }

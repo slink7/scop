@@ -442,21 +442,6 @@ pub unsafe fn create_sync_objects(device: &Device, data: &mut AppData,) -> Resul
     Ok(())
 }
 
-pub unsafe fn get_memory_type_index(
-    physical_device: &PhysicalDevice,
-    properties: vk::MemoryPropertyFlags,
-    requirements: vk::MemoryRequirements
-) -> Result<u32> {
-    let memory = physical_device.memory_properties;
-
-    (0..memory.memory_type_count)
-        .find(|i| {
-            let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
-            let memory_type = memory.memory_types[*i as usize];
-            suitable && memory_type.property_flags.contains(properties)
-        })
-        .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
-}
 
 pub unsafe fn create_buffer(
     device: &vulkanalia::Device,
@@ -477,8 +462,7 @@ pub unsafe fn create_buffer(
 
     let memory_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
-        .memory_type_index(get_memory_type_index(
-            physical_device,
+        .memory_type_index(physical_device.memory_type_index(
             properties,
             requirements
         )?);
@@ -721,8 +705,8 @@ pub unsafe fn create_image(
 
     let info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
-        .memory_type_index(get_memory_type_index(
-            &physical_device,
+        .memory_type_index(
+            physical_device.memory_type_index(
             properties,
             requirements
         )?);
@@ -734,7 +718,14 @@ pub unsafe fn create_image(
     Ok((image, image_memory))
 }
 
-pub unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &mut AppData, physical_device: &PhysicalDevice, dev: &DeviceContext) -> Result<()> {
+pub unsafe fn create_texture_image(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+    physical_device:
+    &PhysicalDevice,
+    dev: &DeviceContext
+) -> Result<()> {
     let image = File::open(TEXTURE_PATH)?;
 
     let decoder = png::Decoder::new(image);
