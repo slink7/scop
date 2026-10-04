@@ -1395,16 +1395,7 @@ impl App {
 
         let ubo = UniformBufferObject { view, proj };
 
-        let memory = vulkan.device.device.map_memory(
-            self.data.uniforms[image_index].memory,
-            0,
-            size_of::<UniformBufferObject>() as u64,
-            vk::MemoryMapFlags::empty()
-        )?;
-
-        memcpy(&ubo, memory.cast(), 1);
-
-        vulkan.device.device.unmap_memory(self.data.uniforms[image_index].memory);
+        self.data.uniforms[image_index].write(vulkan, &[ubo])?;
 
         Ok(())
     }

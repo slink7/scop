@@ -1,3 +1,5 @@
+use std::ptr::copy_nonoverlapping as memcpy;
+
 use anyhow::Result;
 
 use vulkanalia::vk::{self, DeviceV1_0, HasBuilder};
@@ -46,6 +48,24 @@ impl Buffer {
             memory,
             size
         })
+    }
+
+    pub unsafe fn write<T>(
+        &self,
+        vulkan: &VulkanContext,
+        data: &[T]
+    ) -> Result<()> {
+        let ptr = vulkan.device.device.map_memory(
+            self.memory,
+            0,
+            self.size,
+            vk::MemoryMapFlags::empty()
+        )?;
+
+        memcpy(data.as_ptr(), ptr.cast(), data.len());
+
+        vulkan.device.device.unmap_memory(self.memory);
+        Ok(())
     }
 
     pub unsafe fn destroy(
