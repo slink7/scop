@@ -21,7 +21,40 @@ use thiserror::Error;
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 
+pub unsafe fn get_supported_format(
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags
+) -> Result<vk::Format> {
+    candidates
+        .iter()
+        .cloned()
+        .find(|f| {
+            let properties = instance.get_physical_device_format_properties(
+                physical_device,
+                *f
+            );
 
+            match tiling {
+                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
+                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
+                _ => false,
+            }
+        })
+        .ok_or_else(|| anyhow!("Failed to find supported format!"))
+}
+
+pub unsafe fn get_depth_format(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<vk::Format> {
+    let candidates = &[
+        vk::Format::D32_SFLOAT,
+        vk::Format::D32_SFLOAT_S8_UINT,
+        vk::Format::D24_UNORM_S8_UINT
+    ];
+
+    get_supported_format(instance, physical_device, candidates, vk::ImageTiling::OPTIMAL, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct SwapchainSupport {
@@ -134,7 +167,8 @@ pub struct PhysicalDevice {
     pub queue_families_indices: QueueFamilyIndices,
     pub swapchain_support: SwapchainSupport,
     pub extensions: HashSet<StringArray<256>>,
-    pub max_msaa_samples: vk::SampleCountFlags
+    pub max_msaa_samples: vk::SampleCountFlags,
+    pub depth_format: vk::Format
 }
 
 impl PhysicalDevice {
@@ -163,6 +197,7 @@ impl PhysicalDevice {
             .map(|e| e.extension_name)
             .collect::<HashSet<_>>();
         let max_msaa_samples = get_max_msaa_samples(properties);
+        let depth_format = get_depth_format(instance, handle)?;
 
         Ok(Self {
             handle,
@@ -173,7 +208,8 @@ impl PhysicalDevice {
             queue_families_indices,
             swapchain_support,
             extensions,
-            max_msaa_samples
+            max_msaa_samples,
+            depth_format
         })
     }
 

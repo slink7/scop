@@ -24,6 +24,8 @@ mod app;
 mod physical_device;
 mod vulkan_context;
 mod window_context;
+mod image;
+mod texture;
 
 use crate::app::App;
 use crate::vulkan_context::VulkanContext;

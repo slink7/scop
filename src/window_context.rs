@@ -8,6 +8,10 @@ use anyhow::Result;
 
 use crate::vulkan_context::VulkanContext;
 
+pub struct Swapchain {
+    
+}
+
 #[derive(Debug)]
 pub struct WindowContext {
     pub window: Window,

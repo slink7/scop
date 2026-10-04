@@ -44,6 +44,41 @@ pub extern "system" fn debug_callback(
     vk::FALSE
 }
 
+pub unsafe fn get_supported_format(
+    instance: &Instance,
+    physical_device: &PhysicalDevice,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags
+) -> Result<vk::Format> {
+    candidates
+        .iter()
+        .cloned()
+        .find(|f| {
+            let properties = instance.get_physical_device_format_properties(
+                physical_device.handle,
+                *f
+            );
+
+            match tiling {
+                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
+                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
+                _ => false,
+            }
+        })
+        .ok_or_else(|| anyhow!("Failed to find supported format!"))
+}
+
+pub unsafe fn get_depth_format(instance: &Instance, physical_device: &PhysicalDevice) -> Result<vk::Format> {
+    let candidates = &[
+        vk::Format::D32_SFLOAT,
+        vk::Format::D32_SFLOAT_S8_UINT,
+        vk::Format::D24_UNORM_S8_UINT
+    ];
+
+    get_supported_format(instance, &physical_device, candidates, vk::ImageTiling::OPTIMAL, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+}
+
 pub unsafe fn create_debug_messenger(
     instance: &Instance
 ) -> Result<vk::DebugUtilsMessengerEXT> {
@@ -193,13 +228,12 @@ impl DeviceContext {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct VulkanContext {
     pub instance: vulkanalia::Instance,
     pub messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: PhysicalDevice,
     pub device: DeviceContext,
-    pub surface: vk::SurfaceKHR,
     pub entry: Entry
 }
 
@@ -219,7 +253,6 @@ impl VulkanContext {
             messenger,
             physical_device,
             device,
-            surface,
             entry
         };
         let window = WindowContext::from_surface(&vulkan, window, surface)?;
@@ -234,8 +267,6 @@ impl VulkanContext {
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.messenger, None);
         }
-
-        self.instance.destroy_surface_khr(self.surface, None);
 
         self.instance.destroy_instance(None);
     }

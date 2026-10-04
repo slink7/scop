@@ -22,6 +22,7 @@ use winit::window::Window;
 
 // use log::*;
 
+use crate::image::Image;
 use crate::model::Model;
 use crate::vertex::Vertex;
 use crate::physical_device::PhysicalDevice;
@@ -79,13 +80,13 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
     }
 }
 
-pub unsafe fn create_swapchain(window: &Window, context: &VulkanContext, data: &mut AppData) ->Result<()> {
+pub unsafe fn create_swapchain(window: &WindowContext, context: &VulkanContext, data: &mut AppData) ->Result<()> {
     let indices = context.physical_device.queue_families_indices;
     let support = context.physical_device.swapchain_support.clone();
 
     let surface_format = get_swapchain_surface_format(&support.formats);
     let present_mode = get_swapchain_present_mode(&support.present_modes);
-    let extent = get_swapchain_extent(window, support.capabilities);
+    let extent = get_swapchain_extent(&window.window, support.capabilities);
 
     let mut images_count = support.capabilities.min_image_count + 1;
     if support.capabilities.max_image_count != 0 && images_count > support.capabilities.max_image_count {
@@ -102,7 +103,7 @@ pub unsafe fn create_swapchain(window: &Window, context: &VulkanContext, data: &
     };
 
     let info = vk::SwapchainCreateInfoKHR::builder()
-        .surface(context.surface)
+        .surface(window.surface)
         .min_image_count(images_count)
         .image_format(surface_format.format)
         .image_color_space(surface_format.color_space)
@@ -273,7 +274,12 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData, physical_devi
     Ok(())
 }
 
-pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut AppData, physical_device: &PhysicalDevice) -> Result<()> {
+pub unsafe fn create_render_pass(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+    physical_device: &PhysicalDevice
+)-> Result<()> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain_format)
         .samples(physical_device.max_msaa_samples)
@@ -289,7 +295,7 @@ pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mu
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
-        .format(get_depth_format(instance, physical_device)?)
+        .format(physical_device.depth_format)
         .samples(physical_device.max_msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -355,7 +361,7 @@ pub unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result
         .swapchain_image_views
         .iter()
         .map(|i| {
-            let attachments = &[data.color_image_view, data.depth_image_view, *i];
+            let attachments = &[data.color.view, data.depth.view, *i];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(attachments)
@@ -779,7 +785,6 @@ pub unsafe fn create_texture_image(instance: &Instance, device: &Device, data: &
     data.texture_image = texture_image;
     data.texture_image_memory = texture_image_memory;
 
-    //////
     transition_image_layout(
         device,
         data,
@@ -1154,101 +1159,6 @@ pub unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Res
     Ok(())
 }
 
-pub unsafe fn get_supported_format(
-    instance: &Instance,
-    physical_device: &PhysicalDevice,
-    candidates: &[vk::Format],
-    tiling: vk::ImageTiling,
-    features: vk::FormatFeatureFlags
-) -> Result<vk::Format> {
-    candidates
-        .iter()
-        .cloned()
-        .find(|f| {
-            let properties = instance.get_physical_device_format_properties(
-                physical_device.handle,
-                *f
-            );
-
-            match tiling {
-                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
-                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
-                _ => false,
-            }
-        })
-        .ok_or_else(|| anyhow!("Failed to find supported format!"))
-}
-
-pub unsafe fn get_depth_format(instance: &Instance, physical_device: &PhysicalDevice) -> Result<vk::Format> {
-    let candidates = &[
-        vk::Format::D32_SFLOAT,
-        vk::Format::D32_SFLOAT_S8_UINT,
-        vk::Format::D24_UNORM_S8_UINT
-    ];
-
-    get_supported_format(instance, &physical_device, candidates, vk::ImageTiling::OPTIMAL, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
-}
-
-pub unsafe fn create_depth_objects(instance: &Instance, device: &Device, data: &mut AppData, physical_device: &PhysicalDevice) -> Result<()> {
-    
-    let format = get_depth_format(instance, physical_device)?;
-
-    let (depth_image, depth_image_memory) = create_image(
-        instance,
-        device,
-        physical_device,
-        data.swapchain_extent.width,
-        data.swapchain_extent.height,
-        1,
-        physical_device.max_msaa_samples,
-        format,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL
-    )?;
-
-    data.depth_image = depth_image;
-    data.depth_image_memory = depth_image_memory;
-
-    data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH, 1)?;
-
-    Ok(())
-}
-
-pub unsafe fn create_color_objects(
-    instance: &Instance,
-    device: &Device,
-    data: &mut AppData,
-    physical_device: &PhysicalDevice
-) -> Result<()> {
-    let (color_image, color_image_memory) = create_image(
-        instance,
-        device,
-        physical_device,
-        data.swapchain_extent.width,
-        data.swapchain_extent.height,
-        1,
-        physical_device.max_msaa_samples,
-        data.swapchain_format,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL
-    )?;
-
-    data.color_image = color_image;
-    data.color_image_memory = color_image_memory;
-
-    data.color_image_view = create_image_view(
-        device,
-        data.color_image,
-        data.swapchain_format,
-        vk::ImageAspectFlags::COLOR,
-        1
-    )?;
-
-    Ok(())
-}
-
 #[derive(Debug)]
 pub struct App {
     pub data: AppData,
@@ -1392,7 +1302,7 @@ impl App {
     ) -> Result<Self> {
         let mut data = AppData::default();
         
-        create_swapchain(&window.window, &vulkan, &mut data)?;
+        create_swapchain(&window, &vulkan, &mut data)?;
         create_swapchain_image_views(&vulkan.device.device, &mut data)?;
 
         data.secondary_command_buffers = vec![Vec::new(); data.swapchain_images.len()];
@@ -1402,8 +1312,8 @@ impl App {
         create_pipeline(&vulkan.device.device, &mut data, &vulkan.physical_device)?;
 
         create_command_pools(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
-        create_color_objects(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
-        create_depth_objects(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device)?;
+        data.color = Image::new_color(vulkan, data.swapchain_extent, data.swapchain_format)?;
+        data.depth = Image::new_depth(vulkan, data.swapchain_extent)?;
         create_framebuffers(&vulkan.device.device, &mut data)?;
         create_texture_image(&vulkan.instance, &vulkan.device.device, &mut data, &vulkan.physical_device, &vulkan.device)?;
         create_texture_image_view(&vulkan.device.device, &mut data)?;
@@ -1430,13 +1340,13 @@ impl App {
         vulkan.device.device.device_wait_idle()?;
         self.destroy_swapchain(vulkan);
 
-        create_swapchain(&self.window.window, &vulkan, &mut self.data)?;
+        create_swapchain(&self.window, &vulkan, &mut self.data)?;
         create_swapchain_image_views(&vulkan.device.device, &mut self.data)?;
         self.data.secondary_command_buffers = vec![Vec::new(); self.data.swapchain_images.len()];
         create_render_pass(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
         create_pipeline(&vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
-        create_color_objects(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
-        create_depth_objects(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
+        self.data.color = Image::new_color(vulkan, self.data.swapchain_extent, self.data.swapchain_format)?;
+        self.data.depth = Image::new_depth(vulkan, self.data.swapchain_extent)?;
         create_framebuffers(&vulkan.device.device, &mut self.data)?;
         create_uniform_buffers(&vulkan.instance, &vulkan.device.device, &mut self.data, &vulkan.physical_device)?;
         create_descriptor_pool(&vulkan.device.device, &mut self.data)?;
@@ -1586,36 +1496,22 @@ impl App {
         &mut self,
         vulkan: &VulkanContext
     ) {
-
         let device = &vulkan.device.device;
 
-for (i, pool) in self.data.command_pools.iter().enumerate() {
-    let mut to_free = Vec::new();
-    if let Some(cb) = self.data.command_buffers.get(i) {
-        to_free.push(*cb);
-    }
-    if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
-        to_free.extend_from_slice(secondaries);
-    }
-    if !to_free.is_empty() {
-        device.free_command_buffers(*pool, &to_free);
-    }
-}
-self.data.command_buffers.clear();
-self.data.secondary_command_buffers.clear();
-
-        // vulkan.device.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
-
-        // let device = &vulkan.device.device;
-        // for (i, pool) in self.data.command_pools.iter().enumerate() {
-        //     if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
-        //         if !secondaries.is_empty() {
-        //             device.free_command_buffers(*pool, secondaries);
-        //         }
-        //     }
-        //     device.free_command_buffers(*pool, &[self.data.command_buffers[i]]);
-        // }
-        // self.data.secondary_command_buffers.clear();
+        for (i, pool) in self.data.command_pools.iter().enumerate() {
+            let mut to_free = Vec::new();
+            if let Some(cb) = self.data.command_buffers.get(i) {
+                to_free.push(*cb);
+            }
+            if let Some(secondaries) = self.data.secondary_command_buffers.get(i) {
+                to_free.extend_from_slice(secondaries);
+            }
+            if !to_free.is_empty() {
+                device.free_command_buffers(*pool, &to_free);
+            }
+        }
+        self.data.command_buffers.clear();
+        self.data.secondary_command_buffers.clear();
 
         vulkan.device.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
         self.data.uniform_buffers
@@ -1625,13 +1521,8 @@ self.data.secondary_command_buffers.clear();
             .iter()
             .for_each(|m| vulkan.device.device.free_memory(*m, None));
 
-        vulkan.device.device.destroy_image_view(self.data.depth_image_view, None);
-        vulkan.device.device.free_memory(self.data.depth_image_memory, None);
-        vulkan.device.device.destroy_image(self.data.depth_image, None);
-
-        vulkan.device.device.destroy_image_view(self.data.color_image_view, None);
-        vulkan.device.device.free_memory(self.data.color_image_memory, None);
-        vulkan.device.device.destroy_image(self.data.color_image, None);
+        self.data.color.destroy(vulkan);
+        self.data.depth.destroy(vulkan);
 
         self.data.framebuffers
             .iter()
@@ -1692,44 +1583,40 @@ self.data.secondary_command_buffers.clear();
 
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct AppData {
-   pub  swapchain_format: vk::Format,
-   pub  swapchain_extent: vk::Extent2D,
-   pub  swapchain: vk::SwapchainKHR,
-   pub  swapchain_images: Vec<vk::Image>,
-   pub  swapchain_image_views: Vec<vk::ImageView>,
-   pub  render_pass: vk::RenderPass,
-   pub  descriptor_set_layout: vk::DescriptorSetLayout,
-   pub  pipeline_layout: vk::PipelineLayout,
-   pub  pipeline: vk::Pipeline,
-   pub  framebuffers: Vec<vk::Framebuffer>,
-   pub  command_pool: vk::CommandPool,
-   pub  command_pools: Vec<vk::CommandPool>,
-   pub  command_buffers: Vec<vk::CommandBuffer>,
-   pub  secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
-   pub  image_available_semaphore: Vec<vk::Semaphore>,
-   pub  render_finished_semaphore: Vec<vk::Semaphore>,
-   pub  in_flight_fences: Vec<vk::Fence>,
-   pub  images_in_flight: Vec<vk::Fence>,
-   pub  model: Model,
-   pub  vertex_buffer: vk::Buffer,
-   pub  vertex_buffer_memory: vk::DeviceMemory,
-   pub  index_buffer: vk::Buffer,
-   pub  index_buffer_memory: vk::DeviceMemory,
-   pub  uniform_buffers: Vec<vk::Buffer>,
-   pub  uniform_buffers_memory: Vec<vk::DeviceMemory>,
-   pub  descriptor_pool: vk::DescriptorPool,
-   pub  descriptor_sets: Vec<vk::DescriptorSet>,
-   pub  mip_levels: u32,
-   pub  texture_image: vk::Image,
-   pub  texture_image_memory: vk::DeviceMemory,
-   pub  texture_image_view: vk::ImageView,
-   pub  texture_sampler: vk::Sampler,
-   pub  depth_image: vk::Image,
-   pub  depth_image_memory: vk::DeviceMemory,
-   pub  depth_image_view: vk::ImageView,
-   pub  color_image: vk::Image,
-   pub  color_image_memory: vk::DeviceMemory,
-   pub  color_image_view: vk::ImageView
+    pub swapchain_format: vk::Format,
+    pub swapchain_extent: vk::Extent2D,
+    pub swapchain: vk::SwapchainKHR,
+    pub swapchain_images: Vec<vk::Image>,
+    pub swapchain_image_views: Vec<vk::ImageView>,
+    pub render_pass: vk::RenderPass,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub pipeline_layout: vk::PipelineLayout,
+    pub pipeline: vk::Pipeline,
+    pub framebuffers: Vec<vk::Framebuffer>,
+    pub command_pool: vk::CommandPool,
+    pub command_pools: Vec<vk::CommandPool>,
+    pub command_buffers: Vec<vk::CommandBuffer>,
+    pub secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
+    pub image_available_semaphore: Vec<vk::Semaphore>,
+    pub render_finished_semaphore: Vec<vk::Semaphore>,
+    pub in_flight_fences: Vec<vk::Fence>,
+    pub images_in_flight: Vec<vk::Fence>,
+    pub model: Model,
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_buffer_memory: vk::DeviceMemory,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
+    pub uniform_buffers: Vec<vk::Buffer>,
+    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub mip_levels: u32,
+    pub texture_image: vk::Image,
+    pub texture_image_memory: vk::DeviceMemory,
+    pub texture_image_view: vk::ImageView,
+    pub texture_sampler: vk::Sampler,
+    pub depth: Image,
+    pub color: Image
 }
